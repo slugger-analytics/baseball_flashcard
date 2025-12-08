@@ -1,0 +1,30 @@
+# Dependencies - will be installed fresh in container
+node_modules
+
+# Git
+.git
+.gitignore
+
+# Development files
+*.log
+*.md
+.DS_Store
+
+# Test files
+test*.js
+test*.txt
+
+# Backup files
+*-backup.js
+*.backup
+
+# IDE/Editor
+.vscode
+.idea
+
+# Docker
+Dockerfile
+.dockerignore
+
+# Empty directories
+Batter Widget
