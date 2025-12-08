@@ -5,6 +5,35 @@ const axios = require('axios');
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// Root health check endpoint for Lambda Web Adapter
+// Must be available before other routes (Requirement 12.1, 12.2, 12.4)
+app.get('/health', (req, res) => {
+  res.status(200).json({
+    status: 'healthy',
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Request logging middleware (Requirements 5.3, 5.4)
+app.use((req, res, next) => {
+  const startTime = Date.now();
+  const requestPath = req.path;
+  const method = req.method;
+
+  // Log request start
+  console.log(`[${new Date().toISOString()}] ${method} ${requestPath} - Started`);
+
+  // Capture response finish to log response time
+  res.on('finish', () => {
+    const duration = Date.now() - startTime;
+    const statusCode = res.statusCode;
+    console.log(`[${new Date().toISOString()}] ${method} ${requestPath} - ${statusCode} (${duration}ms)`);
+  });
+
+  next();
+});
+
 app.use(express.static('.'));
 
 const SLUGGER_CONFIG = {
@@ -51,11 +80,11 @@ async function populateLookupCaches() {
     const players = await fetchAllPages('/players');
     players.forEach(p => { if (p.player_id && p.player_name) lookupCache.players.set(p.player_id, p); });
     console.log(`✅ Cached ${lookupCache.players.size} players`);
-    
+
     const teams = await fetchAllPages('/teams');
     teams.forEach(t => { if (t.team_code && t.team_name) lookupCache.teams.set(t.team_code, t); });
     console.log(`✅ Cached ${lookupCache.teams.size} teams`);
-    
+
     const ballparks = await fetchAllPages('/ballparks');
     ballparks.forEach(b => { if (b.ballpark_name) lookupCache.ballparks.set(b.ballpark_name, b); });
     console.log(`✅ Cached ${lookupCache.ballparks.size} ballparks\n`);
@@ -74,7 +103,7 @@ function getTeamName(code) {
 
 // Known dates with actual game data (from our data exploration)
 const DATES_WITH_DATA = new Set([
-  '2024-05-03', '2024-05-04', '2024-05-05', '2024-05-06', '2024-05-07', '2024-05-08', '2024-05-09', 
+  '2024-05-03', '2024-05-04', '2024-05-05', '2024-05-06', '2024-05-07', '2024-05-08', '2024-05-09',
   '2024-05-10', '2024-05-11', '2024-05-12', '2024-05-14', '2024-05-15', '2024-05-16', '2024-05-17',
   '2024-05-18', '2024-05-19', '2024-05-21', '2024-05-22', '2024-05-23', '2024-05-24', '2024-05-25',
   '2024-05-26', '2024-05-27', '2024-05-28', '2024-05-29', '2024-05-30', '2024-05-31',
@@ -95,45 +124,45 @@ async function fetchPitchesByDateRange(startDateStr, endDateStr) {
   const startDate = new Date(startDateStr), endDate = new Date(endDateStr);
   const allDates = [];
   let currentDate = new Date(startDate);
-  
+
   // Build list of all dates in range
   while (currentDate <= endDate) {
     allDates.push(currentDate.toISOString().split('T')[0]);
     currentDate.setDate(currentDate.getDate() + 1);
   }
-  
+
   // Filter to only dates with known data
   const datesToFetch = allDates.filter(d => DATES_WITH_DATA.has(d));
-  
+
   console.log(`  Total dates in range: ${allDates.length}`);
   console.log(`  Dates with data: ${datesToFetch.length}`);
   console.log(`  Skipping ${allDates.length - datesToFetch.length} empty dates`);
-  
+
   if (datesToFetch.length === 0) {
     console.log(`⚠️  WARNING: No known game dates in this range!`);
     console.log(`   Try: 2024-05-01 to 2024-05-31 (May 2024)`);
     console.log(`   Or:  2024-06-01 to 2024-06-30 (June 2024)`);
     return [];
   }
-  
+
   // Fetch in LARGER batches of 30 for speed
   const BATCH_SIZE = 30;
   const allPitches = [];
   const startTime = Date.now();
-  
+
   for (let i = 0; i < datesToFetch.length; i += BATCH_SIZE) {
     const batch = datesToFetch.slice(i, i + BATCH_SIZE);
     const batchNum = Math.floor(i / BATCH_SIZE) + 1;
     const totalBatches = Math.ceil(datesToFetch.length / BATCH_SIZE);
-    
+
     console.log(`  [Batch ${batchNum}/${totalBatches}] Fetching ${batch.length} dates...`);
-    
+
     const fetchPromises = batch.map(async (dateStr) => {
       // Check cache first
       if (pitchDataCache.has(dateStr)) {
         return pitchDataCache.get(dateStr);
       }
-      
+
       try {
         const pitches = await fetchAllPages('/pitches', { date: dateStr, order: 'ASC' });
         if (pitches.length > 0) {
@@ -146,15 +175,15 @@ async function fetchPitchesByDateRange(startDateStr, endDateStr) {
         return [];
       }
     });
-    
+
     const batchResults = await Promise.all(fetchPromises);
     allPitches.push(...batchResults.flat());
-    
+
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
     const pitchCount = allPitches.length;
     console.log(`    Progress: ${pitchCount.toLocaleString()} pitches in ${elapsed}s`);
   }
-  
+
   const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
   console.log(`✅ Complete: ${allPitches.length.toLocaleString()} pitches from ${datesToFetch.length} dates in ${totalTime}s\n`);
   return allPitches;
@@ -164,7 +193,7 @@ async function fetchPitchesByDateRange(startDateStr, endDateStr) {
 function assessStealThreat(batter) {
   let stealScore = 0;
   const reasons = [];
-  
+
   const stealAttempts = (batter.stolenBases || 0) + (batter.caughtStealing || 0);
   if (stealAttempts > 0) {
     const successRate = (batter.stolenBases / stealAttempts * 100);
@@ -172,17 +201,17 @@ function assessStealThreat(batter) {
     if (successRate >= 75) stealScore += 3;
     reasons.push(`${batter.stolenBases}/${stealAttempts} SB (${successRate.toFixed(0)}%)`);
   }
-  
+
   // Speed indicators from hit data
   if (batter.atBats.length >= 3) {
-    const infieldHits = batter.atBats.filter(ab => 
+    const infieldHits = batter.atBats.filter(ab =>
       ab.exitSpeed < 85 && ab.distance < 150 && ab.result === 'Single'
     ).length;
     if (infieldHits >= 1) {
       stealScore += infieldHits * 2;
       reasons.push(`${infieldHits} infield hit${infieldHits > 1 ? 's' : ''}`);
     }
-    
+
     // Fast runners hit weak grounders that still find holes
     const speedHits = batter.atBats.filter(ab =>
       ab.exitSpeed < 90 && ab.angle < 15 && ab.result === 'Single'
@@ -191,7 +220,7 @@ function assessStealThreat(batter) {
       stealScore += 1;
       reasons.push('beats out grounders');
     }
-    
+
     // Very high exit velo on grounders = leg speed
     const fastGrounders = batter.atBats.filter(ab =>
       ab.exitSpeed >= 95 && ab.angle < 10
@@ -201,7 +230,7 @@ function assessStealThreat(batter) {
       reasons.push('explosive speed');
     }
   }
-  
+
   // Patient hitters see more pitches = more steal opportunities
   if (batter.stats.totalPitches >= 15 && batter.plateAppearances.length > 0) {
     const pitchesPerPA = batter.stats.totalPitches / batter.plateAppearances.length;
@@ -210,11 +239,11 @@ function assessStealThreat(batter) {
       reasons.push('patient');
     }
   }
-  
+
   let threat = 'Low';
   if (stealScore >= 4) threat = 'High';
   else if (stealScore >= 2) threat = 'Moderate';
-  
+
   return threat === 'Low' ? 'Low' : `${threat} (${reasons.join(', ')})`;
 }
 
@@ -222,12 +251,12 @@ function assessStealThreat(batter) {
 function assessBuntThreat(batter) {
   let buntScore = 0;
   const reasons = [];
-  
+
   if (batter.bunts > 0) {
     buntScore += batter.bunts * 3;
     reasons.push(`${batter.bunts} bunts`);
   }
-  
+
   if (batter.stats.swings > 10) {
     const contactRate = (batter.stats.contact / batter.stats.swings * 100);
     if (contactRate >= 80) {
@@ -235,7 +264,7 @@ function assessBuntThreat(batter) {
       reasons.push('high contact');
     }
   }
-  
+
   if (batter.stats.contact >= 10 && batter.stats.weakContact >= 3) {
     const weakPct = (batter.stats.weakContact / batter.stats.contact * 100);
     if (weakPct >= 25) {
@@ -243,7 +272,7 @@ function assessBuntThreat(batter) {
       reasons.push('bat control');
     }
   }
-  
+
   if (batter.atBats.length >= 5) {
     const grounders = batter.atBats.filter(ab => ab.angle < 15).length;
     const groundBallRate = (grounders / batter.atBats.length * 100);
@@ -252,11 +281,11 @@ function assessBuntThreat(batter) {
       reasons.push(`${groundBallRate.toFixed(0)}% GB`);
     }
   }
-  
+
   let threat = 'Low';
   if (buntScore >= 6) threat = 'High';
   else if (buntScore >= 3) threat = 'Moderate';
-  
+
   return threat === 'Low' ? 'Low' : `${threat} (${reasons.join(', ')})`;
 }
 
@@ -286,7 +315,7 @@ function transformPitchDataToTeams(pitchData, existingData = {}) {
         battingOrder: pitch.pa_of_inning || teamsData[teamName].length + 1,
         pitchZones: [], zoneAnalysis: {},
         stats: { totalPitches: 0, strikes: 0, balls: 0, swings: 0, contact: 0, fouls: 0, whiffs: 0, firstPitchPitches: 0, firstPitchSwings: 0, weakContact: 0, hardContact: 0 },
-        plateAppearances: [], atBats: [], stolenBases: 0, caughtStealing: 0, bunts: 0, 
+        plateAppearances: [], atBats: [], stolenBases: 0, caughtStealing: 0, bunts: 0,
         strikeoutSequences: [], strikeoutDetails: [], outSequences: [],
         tendencies: { firstStrike: 'Calculating...', buntThreat: 'Low', stealThreat: 'Low', spray: 'All fields' },
         powerSequence: 'Calculating...'
@@ -313,7 +342,7 @@ function transformPitchDataToTeams(pitchData, existingData = {}) {
       }
       currentPA.isFirstPitch = false;
     }
-    
+
     if (['StrikeCalled', 'StrikeSwinging', 'FoulBall', 'FoulBallFieldable', 'FoulBallNotFieldable'].includes(pitch.pitch_call)) batterData.stats.strikes++;
     if (pitch.pitch_call === 'BallCalled') batterData.stats.balls++;
     if (['StrikeSwinging', 'FoulBall', 'FoulBallFieldable', 'FoulBallNotFieldable', 'InPlay'].includes(pitch.pitch_call)) batterData.stats.swings++;
@@ -328,17 +357,17 @@ function transformPitchDataToTeams(pitchData, existingData = {}) {
 
     if (pitch.play_result && pitch.play_result !== 'Undefined') {
       currentPA.result = pitch.play_result;
-      
+
       // Track sequences that get OUTS (any type of out)
-      const isOut = ['Out', 'Strikeout', 'FieldersChoice', 'DoublePlay', 'TriplePlay', 'Flyout', 'Groundout', 'Lineout', 'Popout'].some(outType => 
+      const isOut = ['Out', 'Strikeout', 'FieldersChoice', 'DoublePlay', 'TriplePlay', 'Flyout', 'Groundout', 'Lineout', 'Popout'].some(outType =>
         pitch.play_result.includes(outType) || pitch.k_or_bb === 'Strikeout'
       );
-      
+
       if (isOut && currentPA.pitches.length >= 2) {
         // Get the last 2-3 pitches that led to this out
         const sequence = currentPA.pitches.slice(-3).map(p => p.type).join(' → ');
         const shortSeq = currentPA.pitches.slice(-2).map(p => p.type).join(' → ');
-        
+
         batterData.outSequences.push({
           sequence: sequence,
           shortSequence: shortSeq,
@@ -346,7 +375,7 @@ function transformPitchDataToTeams(pitchData, existingData = {}) {
           pitchCount: currentPA.pitches.length
         });
       }
-      
+
       if (pitch.play_result.includes('StolenBase') || pitch.k_or_bb === 'Stolen Base') batterData.stolenBases++;
       if (pitch.play_result.includes('CaughtStealing')) batterData.caughtStealing++;
       if (pitch.play_result.includes('Bunt') || pitch.pitch_call.includes('Bunt')) batterData.bunts++;
@@ -358,15 +387,15 @@ function transformPitchDataToTeams(pitchData, existingData = {}) {
     if (pitch.k_or_bb === 'Strikeout' && currentPA.pitches.length >= 2) {
       const lastTwo = currentPA.pitches.slice(-2);
       batterData.strikeoutSequences.push(`${lastTwo[0].type} → ${lastTwo[1].type}`);
-      
+
       // Detailed strikeout analysis
       const strikeoutPitch = currentPA.pitches[currentPA.pitches.length - 1];
       const setupPitch = currentPA.pitches.length >= 2 ? currentPA.pitches[currentPA.pitches.length - 2] : null;
-      
+
       const zone = pitch.plate_loc_side !== null && pitch.plate_loc_height !== null
         ? getZoneFromLocation(pitch.plate_loc_side, pitch.plate_loc_height, batterData.handedness)
         : 'Unknown';
-      
+
       batterData.strikeoutDetails.push({
         finalPitch: strikeoutPitch.type,
         setupPitch: setupPitch ? setupPitch.type : null,
@@ -382,7 +411,7 @@ function transformPitchDataToTeams(pitchData, existingData = {}) {
       if (!batterData.zoneAnalysis[zone]) {
         batterData.zoneAnalysis[zone] = { pitches: 0, swings: 0, whiffs: 0, fouls: 0, weakContact: 0, hardHits: 0, contact: 0 };
       }
-      
+
       const zoneStats = batterData.zoneAnalysis[zone];
       zoneStats.pitches++;
       if (['StrikeSwinging', 'FoulBall', 'FoulBallFieldable', 'FoulBallNotFieldable', 'InPlay'].includes(pitch.pitch_call)) zoneStats.swings++;
@@ -416,11 +445,11 @@ function transformPitchDataToTeams(pitchData, existingData = {}) {
           const rate = (batter.stats.firstPitchSwings / batter.stats.firstPitchPitches * 100);
           batter.tendencies.firstStrike = rate > 50 ? `Aggressive (${rate.toFixed(0)}%)` : `Patient (${rate.toFixed(0)}%)`;
         }
-        
+
         // Use improved threat assessments
         batter.tendencies.stealThreat = assessStealThreat(batter);
         batter.tendencies.buntThreat = assessBuntThreat(batter);
-        
+
         if (batter.atBats.length >= 5) {
           const pullCount = batter.atBats.filter(ab => batter.handedness === 'LHB' ? ab.angle < -15 : ab.angle > 15).length;
           const oppoCount = batter.atBats.filter(ab => batter.handedness === 'LHB' ? ab.angle > 15 : ab.angle < -15).length;
@@ -430,57 +459,57 @@ function transformPitchDataToTeams(pitchData, existingData = {}) {
           else if (oppoPct > 40) batter.tendencies.spray = `Opposite field (${oppoPct.toFixed(0)}%)`;
           else batter.tendencies.spray = `All fields (P:${pullPct.toFixed(0)}% O:${oppoPct.toFixed(0)}%)`;
         }
-// Analyze pitch sequences that get OUTS (not just strikeouts)
-function analyzeOutSequences(outSequences) {
-  if (!outSequences || outSequences.length === 0) {
-    return 'Insufficient data';
-  }
-  
-  const total = outSequences.length;
-  
-  // Count all sequences (both 2-pitch and 3-pitch)
-  const sequenceCounts = {};
-  
-  outSequences.forEach(out => {
-    // Prefer 3-pitch sequences if available
-    const seq = out.pitchCount >= 3 ? out.sequence : out.shortSequence;
-    sequenceCounts[seq] = (sequenceCounts[seq] || 0) + 1;
-  });
-  
-  // Find sequences that appear at least twice OR represent 30%+ of outs
-  const significantSequences = Object.entries(sequenceCounts)
-    .filter(([seq, count]) => count >= 2 || (count / total) >= 0.3)
-    .sort((a, b) => b[1] - a[1]);
-  
-  if (significantSequences.length > 0) {
-    const [topSeq, count] = significantSequences[0];
-    const pct = Math.round(count / total * 100);
-    
-    // Show top sequence with percentage
-    let result = `${topSeq} (${count}/${total} = ${pct}%)`;
-    
-    // If there's a strong second pattern, mention it too
-    if (significantSequences.length > 1 && significantSequences[1][1] >= 2) {
-      const [secondSeq, secondCount] = significantSequences[1];
-      const secondPct = Math.round(secondCount / total * 100);
-      if (secondPct >= 25) {
-        result += ` • Also: ${secondSeq} (${secondPct}%)`;
-      }
-    }
-    
-    return result;
-  }
-  
-  // Fallback: if no clear pattern, show most common individual pitch that gets outs
-  const finalPitches = {};
-  outSequences.forEach(out => {
-    const lastPitch = out.shortSequence.split(' → ').pop();
-    finalPitches[lastPitch] = (finalPitches[lastPitch] || 0) + 1;
-  });
-  
-  const topPitch = Object.entries(finalPitches).sort((a, b) => b[1] - a[1])[0];
-  return `${topPitch[0]} gets outs (${topPitch[1]}/${total})`;
-}
+        // Analyze pitch sequences that get OUTS (not just strikeouts)
+        function analyzeOutSequences(outSequences) {
+          if (!outSequences || outSequences.length === 0) {
+            return 'Insufficient data';
+          }
+
+          const total = outSequences.length;
+
+          // Count all sequences (both 2-pitch and 3-pitch)
+          const sequenceCounts = {};
+
+          outSequences.forEach(out => {
+            // Prefer 3-pitch sequences if available
+            const seq = out.pitchCount >= 3 ? out.sequence : out.shortSequence;
+            sequenceCounts[seq] = (sequenceCounts[seq] || 0) + 1;
+          });
+
+          // Find sequences that appear at least twice OR represent 30%+ of outs
+          const significantSequences = Object.entries(sequenceCounts)
+            .filter(([seq, count]) => count >= 2 || (count / total) >= 0.3)
+            .sort((a, b) => b[1] - a[1]);
+
+          if (significantSequences.length > 0) {
+            const [topSeq, count] = significantSequences[0];
+            const pct = Math.round(count / total * 100);
+
+            // Show top sequence with percentage
+            let result = `${topSeq} (${count}/${total} = ${pct}%)`;
+
+            // If there's a strong second pattern, mention it too
+            if (significantSequences.length > 1 && significantSequences[1][1] >= 2) {
+              const [secondSeq, secondCount] = significantSequences[1];
+              const secondPct = Math.round(secondCount / total * 100);
+              if (secondPct >= 25) {
+                result += ` • Also: ${secondSeq} (${secondPct}%)`;
+              }
+            }
+
+            return result;
+          }
+
+          // Fallback: if no clear pattern, show most common individual pitch that gets outs
+          const finalPitches = {};
+          outSequences.forEach(out => {
+            const lastPitch = out.shortSequence.split(' → ').pop();
+            finalPitches[lastPitch] = (finalPitches[lastPitch] || 0) + 1;
+          });
+
+          const topPitch = Object.entries(finalPitches).sort((a, b) => b[1] - a[1])[0];
+          return `${topPitch[0]} gets outs (${topPitch[1]}/${total})`;
+        }
 
         if (batter.outSequences.length > 0) {
           batter.powerSequence = analyzeOutSequences(batter.outSequences);
@@ -510,18 +539,18 @@ app.get('/api/teams/range', async (req, res) => {
   try {
     const { startDate, endDate } = req.query;
     if (!startDate || !endDate) return res.status(400).json({ error: 'startDate and endDate required' });
-    
+
     console.log(`\nFetching ${startDate} to ${endDate}`);
     const formattedStart = `${startDate.substring(0, 4)}-${startDate.substring(4, 6)}-${startDate.substring(6, 8)}`;
     const formattedEnd = `${endDate.substring(0, 4)}-${endDate.substring(4, 6)}-${endDate.substring(6, 8)}`;
-    
+
     const pitches = await fetchPitchesByDateRange(formattedStart, formattedEnd);
     const teamsData = transformPitchDataToTeams(pitches);
-    
+
     const teamCount = Object.keys(teamsData).length;
     const playerCount = Object.values(teamsData).reduce((sum, team) => sum + team.length, 0);
     console.log(`✅ Complete: ${teamCount} teams, ${playerCount} players\n`);
-    
+
     res.json({ teamsData, metadata: { startDate, endDate, filesProcessed: pitches.length, filesSkipped: 0 } });
   } catch (error) {
     console.error('Error:', error.message);
@@ -530,14 +559,28 @@ app.get('/api/teams/range', async (req, res) => {
 });
 
 app.get('/api/health', (req, res) => {
-  res.json({ 
+  res.json({
     status: 'Server running',
     apiConfigured: true,
     cacheStatus: { players: lookupCache.players.size, teams: lookupCache.teams.size, ballparks: lookupCache.ballparks.size }
   });
 });
 
-const PORT = 3000;
+// Error handling middleware for logging errors with stack traces (Requirement 5.4)
+app.use((err, req, res, next) => {
+  const timestamp = new Date().toISOString();
+  console.error(`[${timestamp}] ERROR: ${err.message}`);
+  console.error(`[${timestamp}] Stack trace:`, err.stack);
+
+  res.status(500).json({
+    error: 'Internal server error',
+    timestamp: timestamp
+  });
+});
+
+// Environment-based port configuration for Lambda compatibility
+const PORT = process.env.PORT || 8080;
+
 async function startServer() {
   await populateLookupCaches();
   app.listen(PORT, () => {
