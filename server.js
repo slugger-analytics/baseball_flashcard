@@ -6,7 +6,10 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Root health check endpoint for Lambda Web Adapter
+// Get BASE_PATH from environment (set by Lambda) or default to empty
+const BASE_PATH = process.env.BASE_PATH || '';
+
+// Root health check endpoint for Lambda Web Adapter (must be at root level)
 // Must be available before other routes (Requirement 12.1, 12.2, 12.4)
 app.get('/health', (req, res) => {
   res.status(200).json({
@@ -14,6 +17,16 @@ app.get('/health', (req, res) => {
     timestamp: new Date().toISOString()
   });
 });
+
+// Also handle health check at BASE_PATH for ALB routing
+if (BASE_PATH) {
+  app.get(`${BASE_PATH}/health`, (req, res) => {
+    res.status(200).json({
+      status: 'healthy',
+      timestamp: new Date().toISOString()
+    });
+  });
+}
 
 // Request logging middleware (Requirements 5.3, 5.4)
 app.use((req, res, next) => {
@@ -34,7 +47,11 @@ app.use((req, res, next) => {
   next();
 });
 
+// Serve static files at both root and BASE_PATH
 app.use(express.static('.'));
+if (BASE_PATH) {
+  app.use(BASE_PATH, express.static('.'));
+}
 
 const SLUGGER_CONFIG = {
   baseUrl: "https://1ywv9dczq5.execute-api.us-east-2.amazonaws.com/ALPBAPI",
@@ -535,7 +552,8 @@ function getPitchAbbreviation(pitchType) {
   return abbrev[pitchType] || 'FB';
 }
 
-app.get('/api/teams/range', async (req, res) => {
+// API route handler for teams/range
+const teamsRangeHandler = async (req, res) => {
   try {
     const { startDate, endDate } = req.query;
     if (!startDate || !endDate) return res.status(400).json({ error: 'startDate and endDate required' });
@@ -556,15 +574,26 @@ app.get('/api/teams/range', async (req, res) => {
     console.error('Error:', error.message);
     res.status(500).json({ error: 'Failed to fetch data', details: error.message });
   }
-});
+};
 
-app.get('/api/health', (req, res) => {
+// API health handler
+const apiHealthHandler = (req, res) => {
   res.json({
     status: 'Server running',
     apiConfigured: true,
     cacheStatus: { players: lookupCache.players.size, teams: lookupCache.teams.size, ballparks: lookupCache.ballparks.size }
   });
-});
+};
+
+// Register API routes at root level
+app.get('/api/teams/range', teamsRangeHandler);
+app.get('/api/health', apiHealthHandler);
+
+// Also register API routes at BASE_PATH for ALB routing
+if (BASE_PATH) {
+  app.get(`${BASE_PATH}/api/teams/range`, teamsRangeHandler);
+  app.get(`${BASE_PATH}/api/health`, apiHealthHandler);
+}
 
 // Error handling middleware for logging errors with stack traces (Requirement 5.4)
 app.use((err, req, res, next) => {
