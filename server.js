@@ -306,13 +306,24 @@ function assessBuntThreat(batter) {
   return threat === 'Low' ? 'Low' : `${threat} (${reasons.join(', ')})`;
 }
 
-function transformPitchDataToTeams(pitchData, existingData = {}) {
+// #4 fourth change was I added the minVelocity as a parameter to filter out pitches that don't meet 
+// the minimum velocity requirement before processing them into teams.
+function transformPitchDataToTeams(pitchData, existingData = {}, minVelocity = 0) {
   const teamsData = { ...existingData }, batterMap = new Map();
   Object.entries(teamsData).forEach(([team, batters]) => {
     batters.forEach(batter => batterMap.set(`${team}_${batter.batter}`, batter));
   });
 
   pitchData.forEach(pitch => {
+
+    // #5 fifth change ok here is the velocity filtering logic:
+    // we parse the pitch speed from the api data, using rel_speed or release_speed as the source and we defaulting to 0 if neither is available
+    const pitchSpeed = parseFloat(pitch.rel_speed || pitch.release_speed  || 0);
+    // if a min velocity limit is requested and this pitch is slower than the limit, we skip it.
+    if (minVelocity > 0 && pitchSpeed < minVelocity) {
+      return;
+    }
+
     const batterName = getPlayerName(pitch.batter_id);
     const teamName = getTeamName(pitch.batter_team_code);
     const pitcherName = getPlayerName(pitch.pitcher_id);
@@ -555,7 +566,8 @@ function getPitchAbbreviation(pitchType) {
 // API route handler for teams/range
 const teamsRangeHandler = async (req, res) => {
   try {
-    const { startDate, endDate } = req.query;
+    // #1 first change is to add the minVelocity to the extracted query parameters.
+    const { startDate, endDate, minVelocity } = req.query;
     if (!startDate || !endDate) return res.status(400).json({ error: 'startDate and endDate required' });
 
     console.log(`\nFetching ${startDate} to ${endDate}`);
@@ -563,7 +575,18 @@ const teamsRangeHandler = async (req, res) => {
     const formattedEnd = `${endDate.substring(0, 4)}-${endDate.substring(4, 6)}-${endDate.substring(6, 8)}`;
 
     const pitches = await fetchPitchesByDateRange(formattedStart, formattedEnd);
-    const teamsData = transformPitchDataToTeams(pitches);
+    
+    // #2 second change is adding a safe parsing logic to convert the minVelocity string into a number (defaulting to 0).
+    let parsedMinVelocity;
+    if (minVelocity) {
+      parsedMinVelocity = parseFloat(minVelocity);
+    } else {
+      parsedMinVelocity = 0;
+    }
+
+    // #3 third change is to passed the parsedMinVelocity to the transformPitchDataToTeams function, which will now filter 
+    // out any pitches that don't meet the minimum velocity requirement before processing them into teams.
+    const teamsData = transformPitchDataToTeams(pitches, {}, parsedMinVelocity);
 
     const teamCount = Object.keys(teamsData).length;
     const playerCount = Object.values(teamsData).reduce((sum, team) => sum + team.length, 0);
