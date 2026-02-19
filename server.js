@@ -306,7 +306,7 @@ function assessBuntThreat(batter) {
   return threat === 'Low' ? 'Low' : `${threat} (${reasons.join(', ')})`;
 }
 
-// #4 fourth change was I added the minVelocity as a parameter to filter out pitches that don't meet 
+// (Task for VF): #4 fourth change was I added the minVelocity as a parameter to filter out pitches that don't meet 
 // the minimum velocity requirement before processing them into teams.
 function transformPitchDataToTeams(pitchData, existingData = {}, minVelocity = 0) {
   const teamsData = { ...existingData }, batterMap = new Map();
@@ -316,7 +316,7 @@ function transformPitchDataToTeams(pitchData, existingData = {}, minVelocity = 0
 
   pitchData.forEach(pitch => {
 
-    // #5 fifth change ok here is the velocity filtering logic:
+    // (Task for VF): #5 fifth change ok here is the velocity filtering logic:
     // we parse the pitch speed from the api data, using rel_speed or release_speed as the source and we defaulting to 0 if neither is available
     const pitchSpeed = parseFloat(pitch.rel_speed || pitch.release_speed  || 0);
     // if a min velocity limit is requested and this pitch is slower than the limit, we skip it.
@@ -566,17 +566,72 @@ function getPitchAbbreviation(pitchType) {
 // API route handler for teams/range
 const teamsRangeHandler = async (req, res) => {
   try {
-    // #1 first change is to add the minVelocity to the extracted query parameters.
+    // (Task for Velocity Filter): #1 first change for the velocity filter logic is to add the minVelocity to the extracted query parameters.
     const { startDate, endDate, minVelocity } = req.query;
-    if (!startDate || !endDate) return res.status(400).json({ error: 'startDate and endDate required' });
 
-    console.log(`\nFetching ${startDate} to ${endDate}`);
-    const formattedStart = `${startDate.substring(0, 4)}-${startDate.substring(4, 6)}-${startDate.substring(6, 8)}`;
-    const formattedEnd = `${endDate.substring(0, 4)}-${endDate.substring(4, 6)}-${endDate.substring(6, 8)}`;
+    // (Task for Dynamic Time Period Filtering (ALPB Logic)):
+    const today = new Date();
+    const currentYear = today.getFullYear();
+    const currentMonth = today.getMonth(); // 0 is january, 11 is december
+
+    // (Task for DTPF): #1 first is to determine the target season year using if/else
+    let targetYear;
+      if (currentMonth < 3) {
+        // so if we are in jan, feb, or march (0, 1, 2), the ALPB season hasnt started yet.
+        // so we need to look at last year's data:
+        targetYear = currentYear - 1;
+      } else {
+        // if we are in any other month like april thru december, we want to look at the current year's data
+        targetYear = currentYear;
+      }
+    
+    // (Task for DTPF): #2 second this is to define some sort of safety net start date for the ALPB
+    // Start is always going to be april 15th of our target year in order to catch the alpb opening day
+    // even it starts on different days each year, this will ensure we are always capturing the start of the season. We can adjust this date as needed if we find that there are games being missed at the beginning of the season.
+    // alpb start dates for the last 4 years (april, 25, 25, 28, 21) so april 15th is a safe bet to always be before the season starts.
+    const defaultStart = `${targetYear}0415`; // April 15th of target year
+    
+    // (Task for DTPF): #3 determine the end date
+    let defaultEnd;
+      // if its before april (jan - march) or after october (nov-dec) its the Off-Season.
+      if (currentMonth > 3 || currentMonth < 9) {
+        // it the offeseason so cap the search at oct 15 to safley include the ALPB championship.
+        defaultEnd = `${targetYear}1015`; // October 15th of target year
+      } else {
+        // we are actively in the season (April through October). Use Today's exact date
+        const currentMonthFormatted = String(currentMonth + 1).padStart(2, '0');
+        const currentDayFormatted = String(today.getDate()).padStart(2, '0');
+        defaultEnd = `${targetYear}${currentMonthFormatted}${currentDayFormatted}`;
+      }
+    
+    // (Task for DTPF): #4 apply the coaches input (like use their dates if they types them in)
+    let finalStartDate;
+    if (startDate) {
+      finalStartDate = startDate;
+    } else {
+      finalStartDate = defaultStart;
+    }
+
+    let finalEndDate;
+    if (endDate) {
+      finalEndDate = endDate;
+    } else {
+      finalEndDate = defaultEnd;
+    }
+
+    //clean log
+    console.log(`\nFetching ${finalStartDate} to ${finalEndDate}`); 
+
+    // Commented this out b/c this is acting like a strict error check. If the frontend sends blank dates (e.g., clicking "Full Season"), 
+    // we want to fall back to the default dates below instead of just crashing the app: 
+    // if (!startDate || !endDate) return res.status(400).json({ error: 'startDate and endDate required' });
+    
+    const formattedStart = `${finalStartDate.substring(0, 4)}-${finalStartDate.substring(4, 6)}-${finalStartDate.substring(6, 8)}`;
+    const formattedEnd = `${finalEndDate.substring(0, 4)}-${finalEndDate.substring(4, 6)}-${finalEndDate.substring(6, 8)}`;
 
     const pitches = await fetchPitchesByDateRange(formattedStart, formattedEnd);
     
-    // #2 second change is adding a safe parsing logic to convert the minVelocity string into a number (defaulting to 0).
+    // (Task for VF): #2 second change is adding a safe parsing logic to convert the minVelocity string into a number (defaulting to 0).
     let parsedMinVelocity;
     if (minVelocity) {
       parsedMinVelocity = parseFloat(minVelocity);
@@ -584,7 +639,7 @@ const teamsRangeHandler = async (req, res) => {
       parsedMinVelocity = 0;
     }
 
-    // #3 third change is to passed the parsedMinVelocity to the transformPitchDataToTeams function, which will now filter 
+    // (Task for VF): #3 third change is to passed the parsedMinVelocity to the transformPitchDataToTeams function, which will now filter 
     // out any pitches that don't meet the minimum velocity requirement before processing them into teams.
     const teamsData = transformPitchDataToTeams(pitches, {}, parsedMinVelocity);
 
@@ -592,7 +647,7 @@ const teamsRangeHandler = async (req, res) => {
     const playerCount = Object.values(teamsData).reduce((sum, team) => sum + team.length, 0);
     console.log(`✅ Complete: ${teamCount} teams, ${playerCount} players\n`);
 
-    res.json({ teamsData, metadata: { startDate, endDate, filesProcessed: pitches.length, filesSkipped: 0 } });
+    res.json({ teamsData, metadata: { startDate: finalStartDate, endDate: finalEndDate, filesProcessed: pitches.length, filesSkipped: 0 } });
   } catch (error) {
     console.error('Error:', error.message);
     res.status(500).json({ error: 'Failed to fetch data', details: error.message });
