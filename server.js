@@ -1,3 +1,5 @@
+require('dotenv').config();
+
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
@@ -55,7 +57,7 @@ if (BASE_PATH) {
 
 const SLUGGER_CONFIG = {
   baseUrl: "https://1ywv9dczq5.execute-api.us-east-2.amazonaws.com/ALPBAPI",
-  apiKey: "ojgvHrY7Pu4qoE4GDsmxJ1TPZnYa9qwfL9fnI072" //Paste Key here
+  apiKey: process.env.SLUGGER_API_KEY
 };
 
 const lookupCache = { players: new Map(), teams: new Map(), ballparks: new Map() };
@@ -136,74 +138,27 @@ const DATES_WITH_DATA = new Set([
 ]);
 
 // OPTIMIZED: Only fetch dates that have actual game data
+
+//new:
+const BASE_URL = "https://1ywv9dczq5.execute-api.us-east-2.amazonaws.com/ALPBAPI";
+
 async function fetchPitchesByDateRange(startDateStr, endDateStr) {
-  console.log(`Fetching date range: ${startDateStr} to ${endDateStr}`);
-  const startDate = new Date(startDateStr), endDate = new Date(endDateStr);
-  const allDates = [];
-  let currentDate = new Date(startDate);
+    console.log(`Fetching date range from SLUGGER API: ${startDateStr} to ${endDateStr}`);
+    
+    try {
+        // This uses the legacy helper to automatically handle pagination if there are >1000 pitches!
+        const pitches = await fetchAllPages('/pitches', { 
+            date_range_start: startDateStr, 
+            date_range_end: endDateStr 
+        });
 
-  // Build list of all dates in range
-  while (currentDate <= endDate) {
-    allDates.push(currentDate.toISOString().split('T')[0]);
-    currentDate.setDate(currentDate.getDate() + 1);
-  }
+        console.log(`✅ Success: Fetched ${pitches.length} pitches!`);
+        return pitches; 
 
-  // Filter to only dates with known data
-  const datesToFetch = allDates.filter(d => DATES_WITH_DATA.has(d));
-
-  console.log(`  Total dates in range: ${allDates.length}`);
-  console.log(`  Dates with data: ${datesToFetch.length}`);
-  console.log(`  Skipping ${allDates.length - datesToFetch.length} empty dates`);
-
-  if (datesToFetch.length === 0) {
-    console.log(`⚠️  WARNING: No known game dates in this range!`);
-    console.log(`   Try: 2024-05-01 to 2024-05-31 (May 2024)`);
-    console.log(`   Or:  2024-06-01 to 2024-06-30 (June 2024)`);
-    return [];
-  }
-
-  // Fetch in LARGER batches of 30 for speed
-  const BATCH_SIZE = 30;
-  const allPitches = [];
-  const startTime = Date.now();
-
-  for (let i = 0; i < datesToFetch.length; i += BATCH_SIZE) {
-    const batch = datesToFetch.slice(i, i + BATCH_SIZE);
-    const batchNum = Math.floor(i / BATCH_SIZE) + 1;
-    const totalBatches = Math.ceil(datesToFetch.length / BATCH_SIZE);
-
-    console.log(`  [Batch ${batchNum}/${totalBatches}] Fetching ${batch.length} dates...`);
-
-    const fetchPromises = batch.map(async (dateStr) => {
-      // Check cache first
-      if (pitchDataCache.has(dateStr)) {
-        return pitchDataCache.get(dateStr);
-      }
-
-      try {
-        const pitches = await fetchAllPages('/pitches', { date: dateStr, order: 'ASC' });
-        if (pitches.length > 0) {
-          console.log(`    ✅ ${dateStr}: ${pitches.length}`);
-        }
-        pitchDataCache.set(dateStr, pitches);
-        return pitches;
-      } catch (error) {
-        console.log(`    ❌ ${dateStr}: ${error.message}`);
-        return [];
-      }
-    });
-
-    const batchResults = await Promise.all(fetchPromises);
-    allPitches.push(...batchResults.flat());
-
-    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-    const pitchCount = allPitches.length;
-    console.log(`    Progress: ${pitchCount.toLocaleString()} pitches in ${elapsed}s`);
-  }
-
-  const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
-  console.log(`✅ Complete: ${allPitches.length.toLocaleString()} pitches from ${datesToFetch.length} dates in ${totalTime}s\n`);
-  return allPitches;
+    } catch (error) {
+        console.error("❌ Error fetching from SLUGGER API:", error);
+        return []; 
+    }
 }
 
 // Better steal threat assessment
@@ -584,10 +539,11 @@ const teamsRangeHandler = async (req, res) => {
         // if we are in any other month like april thru december, we want to look at the current year's data
         targetYear = currentYear;
       }
-    
+      
     // (Task for DTPF): #2 second this is to define some sort of safety net start date for the ALPB
     // Start is always going to be april 15th of our target year in order to catch the alpb opening day
-    // even it starts on different days each year, this will ensure we are always capturing the start of the season. We can adjust this date as needed if we find that there are games being missed at the beginning of the season.
+    // even it starts on different days each year, this will ensure we are always capturing the start of the season. 
+    // We can adjust this date as needed if we find that there are games being missed at the beginning of the season.
     // alpb start dates for the last 4 years (april, 25, 25, 28, 21) so april 15th is a safe bet to always be before the season starts.
     const defaultStart = `${targetYear}0415`; // April 15th of target year
     
@@ -598,7 +554,8 @@ const teamsRangeHandler = async (req, res) => {
         // it the offeseason so cap the search at oct 15 to safley include the ALPB championship.
         defaultEnd = `${targetYear}1015`; // October 15th of target year
       } else {
-        // we are actively in the season (April through October). Use Today's exact date
+        // we are actively in the season (April through October). 
+        // Use Today's exact date
         const currentMonthFormatted = String(currentMonth + 1).padStart(2, '0');
         const currentDayFormatted = String(today.getDate()).padStart(2, '0');
         defaultEnd = `${targetYear}${currentMonthFormatted}${currentDayFormatted}`;
