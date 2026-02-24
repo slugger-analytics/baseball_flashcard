@@ -577,14 +577,20 @@ const teamsRangeHandler = async (req, res) => {
     }
 
     //clean log
-    console.log(`\nFetching ${finalStartDate} to ${finalEndDate}`); 
-
-    // Commented this out b/c this is acting like a strict error check. If the frontend sends blank dates (e.g., clicking "Full Season"), 
+    console.log(`\nFetching ${finalStartDate} to ${finalEndDate}`);
+    // Commented this out b/c this is acting like a strict error check.
+    // If the frontend sends blank dates (e.g., clicking "Full Season"), 
     // we want to fall back to the default dates below instead of just crashing the app: 
     // if (!startDate || !endDate) return res.status(400).json({ error: 'startDate and endDate required' });
     
-    const formattedStart = `${finalStartDate.substring(0, 4)}-${finalStartDate.substring(4, 6)}-${finalStartDate.substring(6, 8)}`;
-    const formattedEnd = `${finalEndDate.substring(0, 4)}-${finalEndDate.substring(4, 6)}-${finalEndDate.substring(6, 8)}`;
+    // NEW LOGIC: Only add dashes if they don't already exist!
+    const formatForApi = (dateStr) => {
+        if (!dateStr || dateStr.includes('-')) return dateStr;
+        return `${dateStr.substring(0, 4)}-${dateStr.substring(4, 6)}-${dateStr.substring(6, 8)}`;
+    };
+    
+    const formattedStart = formatForApi(finalStartDate);
+    const formattedEnd = formatForApi(finalEndDate);
 
     const pitches = await fetchPitchesByDateRange(formattedStart, formattedEnd);
     

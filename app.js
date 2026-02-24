@@ -287,16 +287,20 @@ class FlashcardApp {
     CURRENT_SETTINGS = { ...DEFAULT_SETTINGS };
     this.render();
   }
-  async loadDataRange(startDate, endDate) {
+async loadDataRange(startDate, endDate, minVelocity = 0) {
     try {
       this.currentScreen = 'loading';
-      this.loadingMessage = `Loading data from ${startDate} to ${endDate}...`;
+      this.loadingMessage = `Loading data (Min Velo: ${minVelocity} MPH)...`;
       this.render();
+      
+      // Pass the new minVelocity parameter to your secure backend
       const response = await fetch(
-        `./api/teams/range?startDate=${startDate}&endDate=${endDate}`
+        `./api/teams/range?startDate=${startDate}&endDate=${endDate}&minVelocity=${minVelocity}`
       );
+      
       if (!response.ok) throw new Error(`HTTP error: ${response.status}`);
       const data = await response.json();
+      
       TEAMS_DATA = data.teamsData;
       METADATA = data.metadata;
       this.currentScreen = 'teamSelect';
@@ -308,6 +312,32 @@ class FlashcardApp {
       this.render();
     }
   }
+
+  // Add this helper function right below loadDataRange to handle the math for the Smart Buttons
+  fetchSmartData(days) {
+      const minVel = document.getElementById('minVelocity').value;
+      let startStr = '';
+      let endStr = '';
+
+      if (days) {
+          const end = new Date();
+          const start = new Date();
+          start.setDate(end.getDate() - days);
+
+          const formatDate = (d) => {
+              const year = d.getFullYear();
+              const month = String(d.getMonth() + 1).padStart(2, '0');
+              const day = String(d.getDate()).padStart(2, '0');
+              // FIXED: Keep the dashes!
+              return `${year}-${month}-${day}`; 
+          };
+          startStr = formatDate(start);
+          endStr = formatDate(end);
+      }
+      
+      this.loadDataRange(startStr, endStr, minVel);
+  }
+
   showDateSelect() { this.currentScreen = 'dateSelect'; this.render(); }
   showTeamSelect() { this.currentScreen = 'teamSelect'; this.selectedTeam = null; this.render(); }
   showLineup(team) {
@@ -345,95 +375,93 @@ class FlashcardApp {
     );
   }
   renderDateSelect() {
-    return createElement('div', { className: 'team-select-screen' },
-      createElement('h1', {}, 'Select Date Range'),
-      createElement('p', { style: { 'margin-bottom': '30px', opacity: '0.8' } },
-        'Enter dates in YYYYMMDD format'
+return createElement('div', { className: 'team-select-screen' },
+      createElement('h1', {}, 'Filter Trackman Data'),
+      createElement('p', { style: { 'margin-bottom': '20px', opacity: '0.8' } },
+        'Adjust velocity and select a timeframe'
       ),
+      
       createElement('div', {
         style: {
-          'max-width': '500px',
-          margin: '0 auto',
-          display: 'flex',
-          'flex-direction': 'column',
-          gap: '20px'
+          'max-width': '600px', margin: '0 auto', display: 'flex',
+          'flex-direction': 'column', gap: '25px', backgroundColor: '#f8f9fa',
+          padding: '25px', borderRadius: '12px', border: '1px solid #e9ecef'
         }
       },
+        
+        // 1. The Velocity Slider
         createElement('div', {},
-          createElement('label', {
-            style: {
-              display: 'block',
-              'margin-bottom': '10px',
-              'font-weight': 'bold'
-            }
-          }, 'Start Date'),
+          createElement('label', { style: { display: 'block', 'margin-bottom': '10px', 'font-weight': 'bold', 'font-size': '16px' } }, 
+            'Minimum Pitch Velocity'
+          ),
           createElement('input', {
-            id: 'startDate',
-            type: 'text',
-            placeholder: '20240517',
-            value: '20240517',
-            style: {
-              width: '100%',
-              padding: '15px',
-              'font-size': '20px',
-              'text-align': 'center',
-              border: '2px solid #2196F3',
-              'border-radius': '8px',
-              'font-family': 'monospace'
-            }
-          })
+            id: 'minVelocity', type: 'range', min: '0', max: '105', value: '0',
+            style: { width: '100%', cursor: 'pointer' },
+            oninput: (e) => document.getElementById('velValue').innerText = e.target.value + ' MPH'
+          }),
+          createElement('div', { id: 'velValue', style: { textAlign: 'center', fontSize: '20px', fontWeight: 'bold', marginTop: '10px', color: '#2196F3' } }, '0 MPH')
         ),
+
+        // 2. Custom Date Range (Main Feature with Calendar Pickers)
+        createElement('div', { style: { padding: '15px', backgroundColor: 'white', borderRadius: '8px', border: '1px solid #dee2e6' } },
+          createElement('label', { style: { display: 'block', 'margin-bottom': '15px', 'font-weight': 'bold', 'font-size': '16px' } }, 
+            'Custom Date Range'
+          ),
+          createElement('div', { style: { display: 'flex', gap: '15px', marginBottom: '15px' } },
+            createElement('div', { style: { flex: 1 } },
+              createElement('label', { style: { display: 'block', fontSize: '12px', marginBottom: '5px', color: '#666' } }, 'Start Date'),
+              createElement('input', {
+                id: 'startDate', type: 'date',
+                value: '2024-05-17', // Defaulting to a known 2024 date so you can test it easily
+                style: { width: '100%', padding: '10px', borderRadius: '4px', border: '1px solid #ccc', cursor: 'pointer' }
+              })
+            ),
+            createElement('div', { style: { flex: 1 } },
+              createElement('label', { style: { display: 'block', fontSize: '12px', marginBottom: '5px', color: '#666' } }, 'End Date'),
+              createElement('input', {
+                id: 'endDate', type: 'date',
+                value: '2024-05-19',
+                style: { width: '100%', padding: '10px', borderRadius: '4px', border: '1px solid #ccc', cursor: 'pointer' }
+              })
+            )
+          ),
+          
+          createElement('button', {
+            className: 'team-btn', style: { width: '100%', padding: '12px', fontSize: '16px' },
+            onclick: () => {
+              const minVel = document.getElementById('minVelocity').value;
+              // FIXED: Leave the dashes alone! The HTML calendar outputs exactly what Trackman needs.
+              const startRaw = document.getElementById('startDate').value;
+              const endRaw = document.getElementById('endDate').value;
+              this.loadDataRange(startRaw, endRaw, minVel);
+            }
+          }, 'Load Custom Range')
+        ),
+
+        // 3. Quick Options (Smaller, secondary buttons)
         createElement('div', {},
-          createElement('label', {
-            style: {
-              display: 'block',
-              'margin-bottom': '10px',
-              'font-weight': 'bold'
-            }
-          }, 'End Date'),
-          createElement('input', {
-            id: 'endDate',
-            type: 'text',
-            placeholder: '20240519',
-            value: '20240519',
-            style: {
-              width: '100%',
-              padding: '15px',
-              'font-size': '20px',
-              'text-align': 'center',
-              border: '2px solid #2196F3',
-              'border-radius': '8px',
-              'font-family': 'monospace'
-            }
-          })
-        ),
-        createElement('div', {
-          style: {
-            'font-size': '14px',
-            opacity: '0.7',
-            'margin-top': '10px'
-          }
-        },
-          createElement('strong', {}, 'Good date ranges:'),
-          createElement('br', {}),
-          '• 20240517 to 20240519 (3 days)',
-          createElement('br', {}),
-          '• 20240503 to 20240531 (May 2024)',
-          createElement('br', {}),
-          '• 20240601 to 20240630 (June 2024)'
+          createElement('label', { style: { display: 'block', 'margin-bottom': '10px', 'font-weight': 'bold', 'font-size': '14px', color: '#666' } }, 
+            'Quick Options'
+          ),
+          createElement('div', { style: { display: 'flex', gap: '10px', justifyContent: 'center' } },
+            createElement('button', {
+              className: 'team-btn', style: { padding: '8px 10px', fontSize: '13px', flex: 1, backgroundColor: '#17a2b8' },
+              onclick: () => this.fetchSmartData(7)
+            }, 'Last 7 Days'),
+            createElement('button', {
+              className: 'team-btn', style: { padding: '8px 10px', fontSize: '13px', flex: 1, backgroundColor: '#17a2b8' },
+              onclick: () => this.fetchSmartData(30)
+            }, 'Last 30 Days'),
+            createElement('button', {
+              className: 'team-btn', style: { padding: '8px 10px', fontSize: '13px', backgroundColor: '#6c757d', flex: 1 },
+              onclick: () => this.fetchSmartData(null)
+            }, 'Full Season')
+          )
         )
-      ),
-      createElement('button', {
-        className: 'team-btn',
-        style: { 'margin-top': '30px' },
-        onclick: () => {
-          const startDate = document.getElementById('startDate').value;
-          const endDate = document.getElementById('endDate').value;
-          this.loadDataRange(startDate, endDate);
-        }
-      }, 'Load Data')
+      )
     );
   }
+  
   renderTeamSelect() {
     const teams = Object.keys(TEAMS_DATA);
     if (teams.length === 0) {
