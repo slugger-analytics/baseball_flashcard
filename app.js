@@ -318,7 +318,7 @@ try {
       this.currentScreen = 'loading';
       
       // Use the custom message if provided, otherwise fall back to the default
-      this.loadingMessage = customLoadingMessage || `Loading Data (Minimum Velocity: ${minVelocity} MPH)...`;
+      this.loadingMessage = customLoadingMessage || `Loading Data (with the Minimum Velocity of ${minVelocity} MPH)...`;
       this.render();
       
       const response = await fetch(
@@ -526,7 +526,7 @@ createElement('div', {},
     
     // --- ERROR/EMPTY DATA LOGIC ---
     if (teams.length === 0) {
-      let errorMessage = 'No Data Available For The Selected Period.';
+      let errorMessage = 'No Data Available Yet For The Selected Period';
       
       if (METADATA && METADATA.startDate && METADATA.endDate) {
         // Strip out the dashes to turn them into pure numbers (e.g., "2024-05-19" becomes 20240519)
