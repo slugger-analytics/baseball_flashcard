@@ -287,13 +287,14 @@ class FlashcardApp {
     CURRENT_SETTINGS = { ...DEFAULT_SETTINGS };
     this.render();
   }
-async loadDataRange(startDate, endDate, minVelocity = 0) {
-    try {
+async loadDataRange(startDate, endDate, minVelocity = 0, customLoadingMessage = null) {
+try {
       this.currentScreen = 'loading';
-      this.loadingMessage = `Loading data (Min Velo: ${minVelocity} MPH)...`;
+      
+      // Use the custom message if provided, otherwise fall back to the default
+      this.loadingMessage = customLoadingMessage || `Loading Data (Minimum Velocity: ${minVelocity} MPH)...`;
       this.render();
       
-      // Pass the new minVelocity parameter to your secure backend
       const response = await fetch(
         `./api/teams/range?startDate=${startDate}&endDate=${endDate}&minVelocity=${minVelocity}`
       );
@@ -314,10 +315,11 @@ async loadDataRange(startDate, endDate, minVelocity = 0) {
   }
 
   // Add this helper function right below loadDataRange to handle the math for the Smart Buttons
-  fetchSmartData(days) {
+fetchSmartData(days) {
       const minVel = document.getElementById('minVelocity').value;
       let startStr = '';
       let endStr = '';
+      let customMsg = 'Loading the Full Season...';
 
       if (days) {
           const end = new Date();
@@ -328,14 +330,18 @@ async loadDataRange(startDate, endDate, minVelocity = 0) {
               const year = d.getFullYear();
               const month = String(d.getMonth() + 1).padStart(2, '0');
               const day = String(d.getDate()).padStart(2, '0');
-              // FIXED: Keep the dashes!
               return `${year}-${month}-${day}`; 
           };
           startStr = formatDate(start);
           endStr = formatDate(end);
+          customMsg = `Loading the last ${days} days...`;
       }
       
-      this.loadDataRange(startStr, endStr, minVel);
+      // Retain the dates in the calendar memory
+      this.lastStartDate = startStr;
+      this.lastEndDate = endStr;
+
+      this.loadDataRange(startStr, endStr, minVel, customMsg);
   }
 
   showDateSelect() { this.currentScreen = 'dateSelect'; this.render(); }
@@ -375,10 +381,11 @@ async loadDataRange(startDate, endDate, minVelocity = 0) {
     );
   }
   renderDateSelect() {
-return createElement('div', { className: 'team-select-screen' },
-      createElement('h1', {}, 'Filter Trackman Data'),
+  
+    return createElement('div', { className: 'team-select-screen' },
+      createElement('h1', {}, 'Batter Flashcard'),
       createElement('p', { style: { 'margin-bottom': '20px', opacity: '0.8' } },
-        'Adjust the Velocity and Select a Timeframe'
+        'Start by Adjusting the Velocity and Selecting a Timeframe'
       ),
       
       createElement('div', {
@@ -397,12 +404,27 @@ return createElement('div', { className: 'team-select-screen' },
           createElement('input', {
             id: 'minVelocity', type: 'range', min: '0', max: '105', value: '0',
             style: { width: '100%', cursor: 'pointer' },
-            oninput: (e) => document.getElementById('velValue').innerText = e.target.value + ' MPH'
+            oninput: (e) => {
+              const val = e.target.value;
+              const velDisplay = document.getElementById('velValue');
+              velDisplay.innerText = val + ' MPH';
+              
+              // Calculate the exact percentage of the slider (0.0 to 1.0)
+              const percent = val / 105;
+              
+              // Blend Light Blue (59, 130, 246) into Dark Navy (30, 41, 59)
+              const r = Math.round(59 - (percent * (59 - 30)));
+              const g = Math.round(130 - (percent * (130 - 41)));
+              const b = Math.round(246 - (percent * (246 - 59)));
+              
+              velDisplay.style.color = `rgb(${r}, ${g}, ${b})`;
+            }
           }),
-          createElement('div', { id: 'velValue', style: { textAlign: 'center', fontSize: '20px', fontWeight: 'bold', marginTop: '10px', color: '#2196F3' } }, '0 MPH')
+          // Make sure the starting color matches the Light Blue exactly
+          createElement('div', { id: 'velValue', style: { textAlign: 'center', fontSize: '20px', fontWeight: 'bold', marginTop: '10px', color: '#3b82f6', transition: 'color 0.1s ease' } }, '0 MPH')
         ),
 
-        // 2. Custom Date Range (Main Feature with Calendar Pickers)
+// 2. Custom Date Range (Main Feature with Calendar Pickers)
         createElement('div', { style: { padding: '15px', backgroundColor: 'white', borderRadius: '8px', border: '1px solid #dee2e6' } },
           createElement('label', { style: { display: 'block', 'margin-bottom': '15px', 'font-weight': 'bold', 'font-size': '16px' } }, 
             'Custom Date Range'
@@ -412,7 +434,7 @@ return createElement('div', { className: 'team-select-screen' },
               createElement('label', { style: { display: 'block', fontSize: '12px', marginBottom: '5px', color: '#666' } }, 'Start Date'),
               createElement('input', {
                 id: 'startDate', type: 'date',
-                // Default value removed so it starts blank!
+                value: this.lastStartDate || '', // <--- NEW: Injects saved memory, or stays blank if first load
                 style: { width: '100%', padding: '10px', borderRadius: '4px', border: '1px solid #ccc', cursor: 'pointer' }
               })
             ),
@@ -420,7 +442,7 @@ return createElement('div', { className: 'team-select-screen' },
               createElement('label', { style: { display: 'block', fontSize: '12px', marginBottom: '5px', color: '#666' } }, 'End Date'),
               createElement('input', {
                 id: 'endDate', type: 'date',
-                // Default value removed so it starts blank!
+                value: this.lastEndDate || '', // <--- NEW: Injects saved memory, or stays blank if first load
                 style: { width: '100%', padding: '10px', borderRadius: '4px', border: '1px solid #ccc', cursor: 'pointer' }
               })
             )
@@ -432,11 +454,14 @@ return createElement('div', { className: 'team-select-screen' },
               const startRaw = document.getElementById('startDate').value;
               const endRaw = document.getElementById('endDate').value;
               
-              // Safety Check: Prevent the 502 crash if they forget to pick dates
               if (!startRaw || !endRaw) {
                   alert("Please select both a Start Date and an End Date before loading.");
-                  return; // Stops the function here so it doesn't break the server
+                  return; 
               }
+
+              // <--- NEW: Save the exact dates to memory right before fetching
+              this.lastStartDate = startRaw;
+              this.lastEndDate = endRaw;
 
               this.loadDataRange(startRaw, endRaw, minVel);
             }
@@ -444,23 +469,26 @@ return createElement('div', { className: 'team-select-screen' },
         ),
 
         // 3. Quick Options (Smaller, secondary buttons)
-        createElement('div', {},
+createElement('div', {},
           createElement('label', { style: { display: 'block', 'margin-bottom': '10px', 'font-weight': 'bold', 'font-size': '14px', color: '#666' } }, 
             'Quick Options'
           ),
           createElement('div', { style: { display: 'flex', gap: '10px', justifyContent: 'center' } },
             createElement('button', {
-              className: 'team-btn', style: { padding: '8px 10px', fontSize: '13px', flex: 1, backgroundColor: '#17a2b8' },
+              // Uses standard "Load Custom Range" blue
+              className: 'team-btn', style: { padding: '8px 10px', fontSize: '13px', flex: 1 },
               onclick: () => this.fetchSmartData(7)
-            }, 'Last 7 Days'),
+            }, 'Load Last 7 Days'),
             createElement('button', {
-              className: 'team-btn', style: { padding: '8px 10px', fontSize: '13px', flex: 1, backgroundColor: '#17a2b8' },
+              // Uses standard "Load Custom Range" blue
+              className: 'team-btn', style: { padding: '8px 10px', fontSize: '13px', flex: 1 },
               onclick: () => this.fetchSmartData(30)
-            }, 'Last 30 Days'),
+            }, 'Load Last 30 Days'),
             createElement('button', {
-              className: 'team-btn', style: { padding: '8px 10px', fontSize: '13px', backgroundColor: '#6c757d', flex: 1 },
+              // Deep Navy to match the "Filter Trackman Data" Title
+              className: 'team-btn', style: { padding: '8px 10px', fontSize: '13px', flex: 1, background: '#1e293b', border: 'none', boxShadow: 'none' },
               onclick: () => this.fetchSmartData(null)
-            }, 'Full Season')
+            }, 'Load Full Season')
           )
         )
       )
@@ -472,7 +500,7 @@ return createElement('div', { className: 'team-select-screen' },
     
     // --- ERROR/EMPTY DATA LOGIC ---
     if (teams.length === 0) {
-      let errorMessage = 'No team data found for these dates.';
+      let errorMessage = 'No Data Available For The Selected Period.';
       
       if (METADATA && METADATA.startDate && METADATA.endDate) {
         // Strip out the dashes to turn them into pure numbers (e.g., "2024-05-19" becomes 20240519)
@@ -481,7 +509,7 @@ return createElement('div', { className: 'team-select-screen' },
 
         // 1. Check if they went back in time!
         if (startNum > endNum) {
-          errorMessage = 'Invalid Time Selection: No team data.';
+          errorMessage = 'Error: Invalid Time Selection';
         } 
         // 2. If time flows normally, check if it's the offseason
         else {
@@ -493,7 +521,7 @@ return createElement('div', { className: 'team-select-screen' },
           
           // Atlantic League season is ~April (4) to October (10)
           if (month < 4 || month > 10) {
-            errorMessage = 'Out of Season: No team data.';
+            errorMessage = 'Error: Out of Season';
           }
         }
       }
@@ -501,7 +529,7 @@ return createElement('div', { className: 'team-select-screen' },
       return createElement('div', { className: 'team-select-screen' },
         createElement('h1', {}, 'No Data'),
         createElement('p', { style: { fontSize: '20px', fontWeight: 'bold', color: '#d9534f', margin: '20px 0' } }, errorMessage),
-        createElement('button', { className: 'team-btn', onclick: () => this.showDateSelect() }, 'Back to Calendar')
+        createElement('button', { className: 'team-btn', onclick: () => this.showDateSelect() }, 'Back to Home Page')
       );
     }
     // ----------------------------------
@@ -527,7 +555,7 @@ return createElement('div', { className: 'team-select-screen' },
     return createElement('div', { className: 'team-select-screen' },
       createElement('div', { className: 'team-select-header' },
         createElement('h1', {}, 'Select a Team'),
-        createElement('p', {}, `${teams.length} teams available • Date range: ${METADATA?.startDate || 'N/A'} - ${METADATA?.endDate || 'N/A'}`),
+        createElement('p', {}, `${teams.length} teams available • Date range: ${METADATA?.startDate || 'N/A'} to ${METADATA?.endDate || 'N/A'}`),
         createElement('button', { className: 'back-btn', onclick: () => this.showDateSelect() }, '← Change Dates')
       ),
       createElement('div', { className: 'team-grid' }, ...teamButtons)
