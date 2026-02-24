@@ -118,40 +118,39 @@ function createBatterGraphic(handedness, batterName, pitchZones) {
   );
 }
 function createTendencies(tendencies, stats, zoneAnalysis, powerSequence) {
-  const stripPercents = (text) => {
+const stripPercents = (text) => {
     if (typeof text !== 'string') return text;
-    // Drop any parenthetical that contains a percent, then any standalone percents, then tidy spaces
-    return text
-      .replace(/\([^)]*%[^)]*\)/g, '')
-      .replace(/\d+\s*%/g, '')
-      .replace(/\s{2,}/g, ' ')
-      .trim();
+    return text.replace(/\([^)]*%[^)]*\)/g, '').replace(/\d+\s*%/g, '').replace(/\s{2,}/g, ' ').trim();
   };
+
   const safeStats = stats || {};
-  const swingRate = safeStats.totalPitches > 0
-    ? `${(safeStats.swings / safeStats.totalPitches * 100).toFixed(0)}%`
-    : 'N/A';
-  const contactRate = safeStats.swings > 0
-    ? `${(safeStats.contact / safeStats.swings * 100).toFixed(0)}%`
-    : 'N/A';
-  const whiffRate = safeStats.swings > 0
-    ? `${(safeStats.whiffs / safeStats.swings * 100).toFixed(0)}%`
-    : 'N/A';
   const firstPitchSwingRate = safeStats.firstPitchPitches > 0
     ? `${(safeStats.firstPitchSwings / safeStats.firstPitchPitches * 100).toFixed(0)}%`
     : 'N/A';
+
+  // Grab the live slider value for the UI
+  const vulnThreshold = app ? CURRENT_SETTINGS.vulnerableZoneThreshold : 45;
+
   const vulnerableZones = [];
   const hotZones = [];
   if (zoneAnalysis) {
     Object.entries(zoneAnalysis).forEach(([zone, stats]) => {
-      if (stats.swings > CURRENT_SETTINGS.vulnerableZoneMinSwings) {
+      
+      // TODO for @Angela: Weakness Bucket Algorithm goes here
+      
+      if (stats.swings > CURRENT_SETTINGS.vulnerableZoneMinSwings) { 
         const whiffPct = (stats.whiffs / stats.swings * 100);
         const weakContactPct = stats.contact > 0 ? (stats.weakContact / stats.contact * 100) : 0;
         const foulPct = (stats.fouls / stats.swings * 100);
+        
+        // Angela: This is the placeholder math. Replace with your statistical logic!
         const combinedVulnerability = whiffPct + (weakContactPct * 0.5) + (foulPct * 0.3);
-        if (combinedVulnerability > CURRENT_SETTINGS.vulnerableZoneThreshold) {
+        
+        // This links your math to the UI slider Aaron built:
+        if (combinedVulnerability > vulnThreshold) {
           vulnerableZones.push({ zone, score: combinedVulnerability.toFixed(0) });
         }
+        
         const hardHitPct = stats.contact > 0 ? (stats.hardHits / stats.contact * 100) : 0;
         if (hardHitPct > CURRENT_SETTINGS.hotZoneHardHitThreshold && stats.hardHits >= CURRENT_SETTINGS.hotZoneMinHardHits) {
           hotZones.push({ zone, hardHitPct: hardHitPct.toFixed(0) });
@@ -159,14 +158,41 @@ function createTendencies(tendencies, stats, zoneAnalysis, powerSequence) {
       }
     });
   }
+  
   vulnerableZones.sort((a, b) => b.score - a.score);
   hotZones.sort((a, b) => b.hardHitPct - a.hardHitPct);
-  let firstPitchText = tendencies?.firstStrike || `Swings ${firstPitchSwingRate} on first pitch`;
-  let sprayText = tendencies?.spray || 'All fields';
-  firstPitchText = stripPercents(firstPitchText);
-  sprayText = stripPercents(sprayText);
+  
+  let firstPitchText = stripPercents(tendencies?.firstStrike || `Swings ${firstPitchSwingRate} on first pitch`);
+  let sprayText = stripPercents(tendencies?.spray || 'All fields');
   const cleanedPowerSequence = stripPercents(powerSequence || 'Insufficient data');
+
+  // The UI Slider (Aaron part)
+const confidenceSlider = app ? createElement('div', { style: { padding: '12px', background: '#f8fafc', borderRadius: '12px', border: '1px solid var(--border)', marginBottom: '12px' } },
+    createElement('div', { style: { display: 'flex', justifyContent: 'space-between', marginBottom: '8px' } },
+      createElement('span', { style: { fontSize: '14px', fontWeight: '700', color: 'var(--text)' } }, 'Weakness Confidence'),
+      // Added an ID here so we can update the number smoothly
+      createElement('span', { id: 'slider-value-display', style: { fontSize: '14px', fontWeight: '800', color: 'var(--accent)' } }, vulnThreshold)
+    ),
+    createElement('input', {
+      type: 'range', min: '0', max: '100', step: '1',
+      value: vulnThreshold,
+      className: 'setting-slider',
+      style: { width: '100%', cursor: 'pointer' },
+      oninput: (e) => {
+         // 1. Instantly change the number text while dragging (NO screen reload!)
+         const display = document.getElementById('slider-value-display');
+         if (display) display.innerText = e.target.value;
+      },
+      onchange: (e) => {
+         // 2. ONLY update the app's settings when the coach lets go of the mouse
+         app.updateSetting('vulnerableZoneThreshold', parseInt(e.target.value, 10));
+      }
+    }),
+    createElement('div', { style: { fontSize: '11px', color: 'var(--muted)', textAlign: 'center', marginTop: '4px' } }, `Slide Left = Broad | Slide Right = Strict`)
+  ) : null;
+
   return createElement('div', { className: 'info-section' },
+    confidenceSlider,
     createElement('div', { className: 'power-sequence stats-box' },
       createElement('h4', {}, 'First-Pitch Approach'),
       createElement('div', { className: 'power-sequence-text' }, firstPitchText)
@@ -244,7 +270,7 @@ class FlashcardApp {
     const pitchSection = createElement('div', { className: 'pitch-zone-section' },
       createPitchZone(batter.pitchZones || [], batter.handedness)
     );
-    const infoSection = createTendencies(batter.tendencies, batter.stats, batter.zoneAnalysis, batter.powerSequence);
+    const infoSection = createTendencies(batter.tendencies, batter.stats, batter.zoneAnalysis, batter.powerSequence, null);
     const widget = createElement('div', { className: 'widget print-widget' },
       header,
       pitchSection,
@@ -736,7 +762,7 @@ createElement('div', {},
       this.showSettingsPanel ? this.renderSettingsPanel() : null,
       createElement('div', { className: 'pitch-zone-section' }, createPitchZone(data.pitchZones || [], data.handedness)),
       createBatterGraphic(data.handedness, data.batter, data.pitchZones),
-      createTendencies(data.tendencies, data.stats, data.zoneAnalysis, data.powerSequence)
+      createTendencies(data.tendencies, data.stats, data.zoneAnalysis, data.powerSequenc, this)
     );
   }
   render() {
