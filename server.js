@@ -564,7 +564,7 @@ function getPitchAbbreviation(pitchType) {
 }
 
 // API route handler for teams/range
-const teamsRangeHandler = async (req, res) => {
+/*const teamsRangeHandler = async (req, res) => {
   try {
     // (Task for Velocity Filter): #1 first change for the velocity filter logic is to add the minVelocity to the extracted query parameters.
     const { startDate, endDate, minVelocity } = req.query;
@@ -652,7 +652,169 @@ const teamsRangeHandler = async (req, res) => {
     console.error('Error:', error.message);
     res.status(500).json({ error: 'Failed to fetch data', details: error.message });
   }
+}; */
+
+// -------- Angela (2/25) -----
+
+const teamsRangeHandler = async (req, res) => {
+  try {
+    const { startDate, endDate, minVelocity } = req.query;
+    
+    // check if the selected date range is in the future
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    if (endDate) {
+      // parse the end date (handle both YYYYMMDD and YYYY-MM-DD formats)
+      let endDateObj;
+      if (endDate.includes('-')) {
+        endDateObj = new Date(endDate);
+      } else {
+        const year = endDate.substring(0, 4);
+        const month = endDate.substring(4, 6);
+        const day = endDate.substring(6, 8);
+        endDateObj = new Date(`${year}-${month}-${day}`);
+      }
+      
+      endDateObj.setHours(0, 0, 0, 0);
+      
+      if (endDateObj > today) {
+        console.log(`Future date detected: ${endDate}`);
+        return res.status(404).json({ 
+          error: 'future_date',
+          message: 'No Data Available Yet For The Selected Period' 
+        });
+      }
+    }
+    
+    // MAIN CHANGE: don't override user's dates with default logic
+    // only use default dates if NO dates are provided
+    let finalStartDate = startDate;
+    let finalEndDate = endDate;
+    
+    if (!startDate || !endDate) {
+      // only use default logic if user didn't provide dates
+      const currentYear = today.getFullYear();
+      const currentMonth = today.getMonth(); // 0-11
+      
+      // determine target year for ALPB season
+      let targetYear;
+      if (currentMonth < 3) { // Jan-Mar
+        targetYear = currentYear - 1;
+      } else {
+        targetYear = currentYear;
+      }
+      
+      // set defaults only if dates weren't provided
+      if (!startDate) {
+        finalStartDate = `${targetYear}0415`; // April 15
+      }
+      
+      if (!endDate) {
+        if (currentMonth >= 3 && currentMonth <= 9) { // Apr-Oct (in season)
+          const currentMonthFormatted = String(currentMonth + 1).padStart(2, '0');
+          const currentDayFormatted = String(today.getDate()).padStart(2, '0');
+          finalEndDate = `${targetYear}${currentMonthFormatted}${currentDayFormatted}`;
+        } else {
+          finalEndDate = `${targetYear}1015`; // October 15 (off-season)
+        }
+      }
+    }
+    
+    console.log(`\nFetching date range: ${finalStartDate} to ${finalEndDate}`);
+    
+    // format dates for API (add dashes if needed)
+    const formatForApi = (dateStr) => {
+      if (!dateStr) return null;
+      if (dateStr.includes('-')) return dateStr;
+      if (dateStr.length === 8) {
+        return `${dateStr.substring(0, 4)}-${dateStr.substring(4, 6)}-${dateStr.substring(6, 8)}`;
+      }
+      return dateStr;
+    };
+    
+    const formattedStart = formatForApi(finalStartDate);
+    const formattedEnd = formatForApi(finalEndDate);
+    
+    // check if the date range contains any dates with actual data
+    const datesInRange = getDatesInRange(formattedStart, formattedEnd);
+    const hasDataInRange = datesInRange.some(date => DATES_WITH_DATA.has(date));
+    
+    if (!hasDataInRange) {
+      console.log(`No data available in range: ${formattedStart} to ${formattedEnd}`);
+      return res.status(404).json({
+        error: 'no_data',
+        message: 'No Data Available for this date range'
+      });
+    }
+    
+    // fetch pitches
+    const pitches = await fetchPitchesByDateRange(formattedStart, formattedEnd);
+    
+    // parse minVelocity
+    const parsedMinVelocity = minVelocity ? parseFloat(minVelocity) : 0;
+    
+    // transform data with velocity filter
+    const teamsData = transformPitchDataToTeams(pitches, {}, parsedMinVelocity);
+    
+    // check if any data survived the velocity filter
+    const totalPlayers = Object.values(teamsData).reduce((sum, team) => sum + team.length, 0);
+    
+    if (totalPlayers === 0) {
+      return res.status(404).json({
+        error: 'no_data_velocity',
+        message: 'No Data Available for this velocity range'
+      });
+    }
+    
+    const teamCount = Object.keys(teamsData).length;
+    console.log(`✅ Complete: ${teamCount} teams, ${totalPlayers} players\n`);
+    
+    res.json({ 
+      teamsData, 
+      metadata: { 
+        startDate: finalStartDate, 
+        endDate: finalEndDate, 
+        filesProcessed: pitches.length,
+        pitchesFilteredByVelocity: pitches.length - countPitchesByVelocity(pitches, parsedMinVelocity)
+      } 
+    });
+    
+  } catch (error) {
+    console.error('Error:', error.message);
+    res.status(500).json({ error: 'Failed to fetch data', details: error.message });
+  }
 };
+
+// helper function to get all dates between two dates
+function getDatesInRange(startDateStr, endDateStr) {
+  const dates = [];
+  const start = new Date(startDateStr);
+  const end = new Date(endDateStr);
+  
+  const current = new Date(start);
+  while (current <= end) {
+    const dateStr = current.toISOString().split('T')[0];
+    dates.push(dateStr);
+    current.setDate(current.getDate() + 1);
+  }
+  
+  return dates;
+}
+
+// helper to count pitches that would be filtered by velocity
+function countPitchesByVelocity(pitches, minVelocity) {
+  if (minVelocity <= 0) return 0;
+  
+  return pitches.filter(pitch => {
+    const pitchSpeed = parseFloat(pitch.rel_speed || pitch.release_speed || 0);
+    return pitchSpeed < minVelocity;
+  }).length;
+}
+
+
+// --- end -- Angela (2/25) ---- 
+
 
 // API health handler
 const apiHealthHandler = (req, res) => {
