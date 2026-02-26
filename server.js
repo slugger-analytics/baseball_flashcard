@@ -1014,8 +1014,70 @@ function calculateZoneConfidence(pitches, badOutcomes) {
 // ----- End Confidence Threshold Slider Endpoint -----
 
 
+// ---- PDF report  ----- //
+app.get('/api/generate-report', async (req, res) => {
+  try {
+    const { startDate, endDate, minVelocity, confidenceThreshold, selectedTeam, selectedBatter } = req.query;
+    
+    // fetch the data first
+    const formattedStart = formatDateForApi(startDate);
+    const formattedEnd = formatDateForApi(endDate);
+    
+    const pitches = await fetchPitchesByDateRange(formattedStart, formattedEnd);
+    const parsedMinVelocity = minVelocity ? parseFloat(minVelocity) : 0;
+    const teamsData = transformPitchDataToTeams(pitches, {}, parsedMinVelocity);
+    
+    // get specific batter data if selected
+    let batterData = null;
+    if (selectedTeam && selectedBatter && teamsData[selectedTeam]) {
+      batterData = teamsData[selectedTeam].find(b => b.batter === selectedBatter);
+      
+      // calculate weakness zones if confidence threshold provided
+      if (batterData && confidenceThreshold) {
+        const weaknessZones = calculateWeaknessZones(batterData, parseFloat(confidenceThreshold));
+        batterData.weaknessZones = weaknessZones;
+      }
+    }
+    
+    // prepare clean report data
+    const reportData = {
+      metadata: {
+        generatedAt: new Date().toISOString(),
+        dateRange: { start: startDate, end: endDate },
+        velocityRange: minVelocity ? `≥ ${minVelocity} mph` : 'All velocities',
+        confidenceThreshold: confidenceThreshold || 'Not applied',
+        selectedBatter: selectedBatter || 'All batters',
+        selectedTeam: selectedTeam || 'All teams'
+      },
+      summary: {
+        totalTeams: Object.keys(teamsData).length,
+        totalBatters: Object.values(teamsData).reduce((sum, team) => sum + team.length, 0),
+        totalPitchesProcessed: pitches.length
+      },
+      teamsData: selectedTeam ? { [selectedTeam]: teamsData[selectedTeam] } : teamsData,
+      batterDetail: batterData
+    };
+    
+    res.json({
+      success: true,
+      reportData
+    });
+    
+  } catch (error) {
+    console.error('Error generating report:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
 
-
+// helper function to format dates for API
+function formatDateForApi(dateStr) {
+  if (!dateStr) return null;
+  if (dateStr.includes('-')) return dateStr;
+  if (dateStr.length === 8) {
+    return `${dateStr.substring(0, 4)}-${dateStr.substring(4, 6)}-${dateStr.substring(6, 8)}`;
+  }
+  return dateStr;
+}
 
 // --- end -- Angela (2/25) ---- 
 
