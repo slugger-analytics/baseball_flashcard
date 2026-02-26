@@ -55,7 +55,7 @@ if (BASE_PATH) {
 
 const SLUGGER_CONFIG = {
   baseUrl: "https://1ywv9dczq5.execute-api.us-east-2.amazonaws.com/ALPBAPI",
-  apiKey: "ojgvHrY7Pu4qoE4GDsmxJ1TPZnYa9qwfL9fnI072" //Paste Key here
+  apiKey: process.env.SLUGGER_API_KEY 
 };
 
 const lookupCache = { players: new Map(), teams: new Map(), ballparks: new Map() };
@@ -811,6 +811,210 @@ function countPitchesByVelocity(pitches, minVelocity) {
     return pitchSpeed < minVelocity;
   }).length;
 }
+
+
+// -------- Confidence Threshold Slider Endpoint  -----
+
+app.post('/api/weakness-zones', async (req, res) => {
+  try {
+    const { confidenceThreshold, teamsData, selectedTeam, selectedBatter } = req.body;
+    
+    if (!teamsData || !selectedTeam || !selectedBatter) {
+      return res.status(400).json({ 
+        error: 'missing_data',
+        message: 'Missing required data: teamsData, selectedTeam, or selectedBatter' 
+      });
+    }
+    
+    // the specific batter's data
+    const batter = teamsData[selectedTeam]?.find(b => b.batter === selectedBatter);
+    
+    if (!batter) {
+      return res.status(404).json({ 
+        error: 'batter_not_found',
+        message: `Batter ${selectedBatter} not found in team ${selectedTeam}` 
+      });
+    }
+    
+    console.log(`Calculating weakness zones for ${selectedBatter} with threshold: ${confidenceThreshold}%`);
+    
+    // calculate weakness zones based on confidence threshold
+    const weaknessZones = calculateWeaknessZones(batter, confidenceThreshold);
+    
+    // determine number of zones to display based on threshold
+    // higher threshold = more selective = fewer zones
+    let zonesToDisplay;
+    if (confidenceThreshold >= 75) {
+      zonesToDisplay = 4; // most selective
+    } else if (confidenceThreshold >= 50) {
+      zonesToDisplay = 8; // moderately  selective
+    } else if (confidenceThreshold >= 25) {
+      zonesToDisplay = 10; // Sslightly selective
+    } else {
+      zonesToDisplay = 12; // least selective (show all)
+    }
+    
+    // sort zones by weakness score and take top N
+    const sortedZones = Object.entries(weaknessZones)
+      .map(([zone, data]) => ({
+        zone,
+        weaknessScore: Math.round(data.weaknessScore * 10) / 10, // Round to 1 decimal
+        sampleSize: data.sampleSize,
+        badOutcomes: data.badOutcomes,
+        confidence: data.confidence,
+        whiffs: data.whiffs,
+        weakContact: data.weakContact
+      }))
+      .sort((a, b) => b.weaknessScore - a.weaknessScore)
+      .slice(0, zonesToDisplay);
+    
+    console.log(`Found ${Object.keys(weaknessZones).length} zones, displaying top ${zonesToDisplay}`);
+    
+    res.json({
+      success: true,
+      zones: sortedZones,
+      metadata: {
+        threshold: confidenceThreshold,
+        zonesDisplayed: zonesToDisplay,
+        totalZonesAnalyzed: Object.keys(weaknessZones).length,
+        batter: selectedBatter,
+        team: selectedTeam
+      }
+    });
+    
+  } catch (error) {
+    console.error('Error calculating weakness zones:', error);
+    res.status(500).json({ 
+      error: 'calculation_error',
+      message: error.message 
+    });
+  }
+});
+
+//  add route with BASE_PATH if needed
+if (BASE_PATH) {
+  app.post(`${BASE_PATH}/api/weakness-zones`, async (req, res) => {
+    // handler as above
+    try {
+      const { confidenceThreshold, teamsData, selectedTeam, selectedBatter } = req.body;
+      
+      if (!teamsData || !selectedTeam || !selectedBatter) {
+        return res.status(400).json({ 
+          error: 'missing_data',
+          message: 'Missing required data: teamsData, selectedTeam, or selectedBatter' 
+        });
+      }
+      
+      const batter = teamsData[selectedTeam]?.find(b => b.batter === selectedBatter);
+      
+      if (!batter) {
+        return res.status(404).json({ 
+          error: 'batter_not_found',
+          message: `Batter ${selectedBatter} not found in team ${selectedTeam}` 
+        });
+      }
+      
+      const weaknessZones = calculateWeaknessZones(batter, confidenceThreshold);
+      
+      let zonesToDisplay;
+      if (confidenceThreshold >= 75) {
+        zonesToDisplay = 4;
+      } else if (confidenceThreshold >= 50) {
+        zonesToDisplay = 8;
+      } else if (confidenceThreshold >= 25) {
+        zonesToDisplay = 10;
+      } else {
+        zonesToDisplay = 12;
+      }
+      
+      const sortedZones = Object.entries(weaknessZones)
+        .map(([zone, data]) => ({
+          zone,
+          weaknessScore: Math.round(data.weaknessScore * 10) / 10,
+          sampleSize: data.sampleSize,
+          badOutcomes: data.badOutcomes,
+          confidence: data.confidence,
+          whiffs: data.whiffs,
+          weakContact: data.weakContact
+        }))
+        .sort((a, b) => b.weaknessScore - a.weaknessScore)
+        .slice(0, zonesToDisplay);
+      
+      res.json({
+        success: true,
+        zones: sortedZones,
+        metadata: {
+          threshold: confidenceThreshold,
+          zonesDisplayed: zonesToDisplay,
+          totalZonesAnalyzed: Object.keys(weaknessZones).length,
+          batter: selectedBatter,
+          team: selectedTeam
+        }
+      });
+      
+    } catch (error) {
+      console.error('Error calculating weakness zones:', error);
+      res.status(500).json({ 
+        error: 'calculation_error',
+        message: error.message 
+      });
+    }
+  });
+}
+
+// helper function to calculate weakness zones
+function calculateWeaknessZones(batter, confidenceThreshold) {
+  const weaknessZones = {};
+  
+  // get all pitch zones from batter's data
+  const zoneStats = batter.zoneAnalysis || {};
+  
+  // min. pitches required based on confidence threshold
+  const minPitchesRequired = calculateMinPitches(confidenceThreshold);
+  
+  Object.entries(zoneStats).forEach(([zone, stats]) => {
+    if (stats.pitches >= minPitchesRequired) {
+      // calculate weakness score based on bad outcomes
+      // bad outcomes = whiffs + weak contact
+      const badOutcomes = (stats.whiffs || 0) + (stats.weakContact || 0);
+      const weaknessScore = (badOutcomes / stats.pitches) * 100;
+      
+      // calculate confidence level
+      const confidence = calculateZoneConfidence(stats.pitches, badOutcomes);
+      
+      weaknessZones[zone] = {
+        weaknessScore,
+        sampleSize: stats.pitches,
+        badOutcomes,
+        confidence,
+        whiffs: stats.whiffs || 0,
+        weakContact: stats.weakContact || 0
+      };
+    }
+  });
+  
+  return weaknessZones;
+}
+
+function calculateMinPitches(confidenceThreshold) {
+  if (confidenceThreshold >= 90) return 15;
+  if (confidenceThreshold >= 75) return 10;
+  if (confidenceThreshold >= 50) return 7;
+  if (confidenceThreshold >= 25) return 5;
+  return 3;
+}
+
+function calculateZoneConfidence(pitches, badOutcomes) {
+  if (pitches >= 15 && badOutcomes >= 5) return 'High';
+  if (pitches >= 10 && badOutcomes >= 3) return 'Medium';
+  if (pitches >= 5) return 'Low';
+  return 'Very Low';
+}
+
+// ----- End Confidence Threshold Slider Endpoint -----
+
+
+
 
 
 // --- end -- Angela (2/25) ---- 
