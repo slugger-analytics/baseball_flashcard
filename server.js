@@ -57,7 +57,7 @@ if (BASE_PATH) {
 
 const SLUGGER_CONFIG = {
   baseUrl: "https://1ywv9dczq5.execute-api.us-east-2.amazonaws.com/ALPBAPI",
-  apiKey: process.env.SLUGGER_API_KEY
+  apiKey: process.env.SLUGGER_API_KEY 
 };
 
 const lookupCache = { players: new Map(), teams: new Map(), ballparks: new Map() };
@@ -519,7 +519,7 @@ function getPitchAbbreviation(pitchType) {
 }
 
 // API route handler for teams/range
-const teamsRangeHandler = async (req, res) => {
+/*const teamsRangeHandler = async (req, res) => {
   try {
     // (Task for Velocity Filter): #1 first change for the velocity filter logic is to add the minVelocity to the extracted query parameters.
     const { startDate, endDate, minVelocity } = req.query;
@@ -615,7 +615,435 @@ const teamsRangeHandler = async (req, res) => {
     console.error('Error:', error.message);
     res.status(500).json({ error: 'Failed to fetch data', details: error.message });
   }
+}; */
+
+// -------- Angela (2/25) -----
+
+const teamsRangeHandler = async (req, res) => {
+  try {
+    const { startDate, endDate, minVelocity } = req.query;
+    
+    // check if the selected date range is in the future
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    if (endDate) {
+      // parse the end date (handle both YYYYMMDD and YYYY-MM-DD formats)
+      let endDateObj;
+      if (endDate.includes('-')) {
+        endDateObj = new Date(endDate);
+      } else {
+        const year = endDate.substring(0, 4);
+        const month = endDate.substring(4, 6);
+        const day = endDate.substring(6, 8);
+        endDateObj = new Date(`${year}-${month}-${day}`);
+      }
+      
+      endDateObj.setHours(0, 0, 0, 0);
+      
+      if (endDateObj > today) {
+        console.log(`Future date detected: ${endDate}`);
+        return res.status(404).json({ 
+          error: 'future_date',
+          message: 'No Data Available Yet For The Selected Period' 
+        });
+      }
+    }
+    
+    // MAIN CHANGE: don't override user's dates with default logic
+    // only use default dates if NO dates are provided
+    let finalStartDate = startDate;
+    let finalEndDate = endDate;
+    
+    if (!startDate || !endDate) {
+      // only use default logic if user didn't provide dates
+      const currentYear = today.getFullYear();
+      const currentMonth = today.getMonth(); // 0-11
+      
+      // determine target year for ALPB season
+      let targetYear;
+      if (currentMonth < 3) { // Jan-Mar
+        targetYear = currentYear - 1;
+      } else {
+        targetYear = currentYear;
+      }
+      
+      // set defaults only if dates weren't provided
+      if (!startDate) {
+        finalStartDate = `${targetYear}0415`; // April 15
+      }
+      
+      if (!endDate) {
+        if (currentMonth >= 3 && currentMonth <= 9) { // Apr-Oct (in season)
+          const currentMonthFormatted = String(currentMonth + 1).padStart(2, '0');
+          const currentDayFormatted = String(today.getDate()).padStart(2, '0');
+          finalEndDate = `${targetYear}${currentMonthFormatted}${currentDayFormatted}`;
+        } else {
+          finalEndDate = `${targetYear}1015`; // October 15 (off-season)
+        }
+      }
+    }
+    
+    console.log(`\nFetching date range: ${finalStartDate} to ${finalEndDate}`);
+    
+    // format dates for API (add dashes if needed)
+    const formatForApi = (dateStr) => {
+      if (!dateStr) return null;
+      if (dateStr.includes('-')) return dateStr;
+      if (dateStr.length === 8) {
+        return `${dateStr.substring(0, 4)}-${dateStr.substring(4, 6)}-${dateStr.substring(6, 8)}`;
+      }
+      return dateStr;
+    };
+    
+    const formattedStart = formatForApi(finalStartDate);
+    const formattedEnd = formatForApi(finalEndDate);
+    
+    // check if the date range contains any dates with actual data
+    const datesInRange = getDatesInRange(formattedStart, formattedEnd);
+    const hasDataInRange = datesInRange.some(date => DATES_WITH_DATA.has(date));
+    
+    if (!hasDataInRange) {
+      console.log(`No data available in range: ${formattedStart} to ${formattedEnd}`);
+      return res.status(404).json({
+        error: 'no_data',
+        message: 'No Data Available for this date range'
+      });
+    }
+    
+    // fetch pitches
+    const pitches = await fetchPitchesByDateRange(formattedStart, formattedEnd);
+    
+    // parse minVelocity
+    const parsedMinVelocity = minVelocity ? parseFloat(minVelocity) : 0;
+    
+    // transform data with velocity filter
+    const teamsData = transformPitchDataToTeams(pitches, {}, parsedMinVelocity);
+    
+    // check if any data survived the velocity filter
+    const totalPlayers = Object.values(teamsData).reduce((sum, team) => sum + team.length, 0);
+    
+    if (totalPlayers === 0) {
+      return res.status(404).json({
+        error: 'no_data_velocity',
+        message: 'No Data Available for this velocity range'
+      });
+    }
+    
+    const teamCount = Object.keys(teamsData).length;
+    console.log(`✅ Complete: ${teamCount} teams, ${totalPlayers} players\n`);
+    
+    res.json({ 
+      teamsData, 
+      metadata: { 
+        startDate: finalStartDate, 
+        endDate: finalEndDate, 
+        filesProcessed: pitches.length,
+        pitchesFilteredByVelocity: pitches.length - countPitchesByVelocity(pitches, parsedMinVelocity)
+      } 
+    });
+    
+  } catch (error) {
+    console.error('Error:', error.message);
+    res.status(500).json({ error: 'Failed to fetch data', details: error.message });
+  }
 };
+
+// helper function to get all dates between two dates
+function getDatesInRange(startDateStr, endDateStr) {
+  const dates = [];
+  const start = new Date(startDateStr);
+  const end = new Date(endDateStr);
+  
+  const current = new Date(start);
+  while (current <= end) {
+    const dateStr = current.toISOString().split('T')[0];
+    dates.push(dateStr);
+    current.setDate(current.getDate() + 1);
+  }
+  
+  return dates;
+}
+
+// helper to count pitches that would be filtered by velocity
+function countPitchesByVelocity(pitches, minVelocity) {
+  if (minVelocity <= 0) return 0;
+  
+  return pitches.filter(pitch => {
+    const pitchSpeed = parseFloat(pitch.rel_speed || pitch.release_speed || 0);
+    return pitchSpeed < minVelocity;
+  }).length;
+}
+
+
+// -------- Confidence Threshold Slider Endpoint  -----
+
+app.post('/api/weakness-zones', async (req, res) => {
+  try {
+    const { confidenceThreshold, teamsData, selectedTeam, selectedBatter } = req.body;
+    
+    if (!teamsData || !selectedTeam || !selectedBatter) {
+      return res.status(400).json({ 
+        error: 'missing_data',
+        message: 'Missing required data: teamsData, selectedTeam, or selectedBatter' 
+      });
+    }
+    
+    // the specific batter's data
+    const batter = teamsData[selectedTeam]?.find(b => b.batter === selectedBatter);
+    
+    if (!batter) {
+      return res.status(404).json({ 
+        error: 'batter_not_found',
+        message: `Batter ${selectedBatter} not found in team ${selectedTeam}` 
+      });
+    }
+    
+    console.log(`Calculating weakness zones for ${selectedBatter} with threshold: ${confidenceThreshold}%`);
+    
+    // calculate weakness zones based on confidence threshold
+    const weaknessZones = calculateWeaknessZones(batter, confidenceThreshold);
+    
+    // determine number of zones to display based on threshold
+    // higher threshold = more selective = fewer zones
+    let zonesToDisplay;
+    if (confidenceThreshold >= 75) {
+      zonesToDisplay = 4; // most selective
+    } else if (confidenceThreshold >= 50) {
+      zonesToDisplay = 8; // moderately  selective
+    } else if (confidenceThreshold >= 25) {
+      zonesToDisplay = 10; // Sslightly selective
+    } else {
+      zonesToDisplay = 12; // least selective (show all)
+    }
+    
+    // sort zones by weakness score and take top N
+    const sortedZones = Object.entries(weaknessZones)
+      .map(([zone, data]) => ({
+        zone,
+        weaknessScore: Math.round(data.weaknessScore * 10) / 10, // Round to 1 decimal
+        sampleSize: data.sampleSize,
+        badOutcomes: data.badOutcomes,
+        confidence: data.confidence,
+        whiffs: data.whiffs,
+        weakContact: data.weakContact
+      }))
+      .sort((a, b) => b.weaknessScore - a.weaknessScore)
+      .slice(0, zonesToDisplay);
+    
+    console.log(`Found ${Object.keys(weaknessZones).length} zones, displaying top ${zonesToDisplay}`);
+    
+    res.json({
+      success: true,
+      zones: sortedZones,
+      metadata: {
+        threshold: confidenceThreshold,
+        zonesDisplayed: zonesToDisplay,
+        totalZonesAnalyzed: Object.keys(weaknessZones).length,
+        batter: selectedBatter,
+        team: selectedTeam
+      }
+    });
+    
+  } catch (error) {
+    console.error('Error calculating weakness zones:', error);
+    res.status(500).json({ 
+      error: 'calculation_error',
+      message: error.message 
+    });
+  }
+});
+
+//  add route with BASE_PATH if needed
+if (BASE_PATH) {
+  app.post(`${BASE_PATH}/api/weakness-zones`, async (req, res) => {
+    // handler as above
+    try {
+      const { confidenceThreshold, teamsData, selectedTeam, selectedBatter } = req.body;
+      
+      if (!teamsData || !selectedTeam || !selectedBatter) {
+        return res.status(400).json({ 
+          error: 'missing_data',
+          message: 'Missing required data: teamsData, selectedTeam, or selectedBatter' 
+        });
+      }
+      
+      const batter = teamsData[selectedTeam]?.find(b => b.batter === selectedBatter);
+      
+      if (!batter) {
+        return res.status(404).json({ 
+          error: 'batter_not_found',
+          message: `Batter ${selectedBatter} not found in team ${selectedTeam}` 
+        });
+      }
+      
+      const weaknessZones = calculateWeaknessZones(batter, confidenceThreshold);
+      
+      let zonesToDisplay;
+      if (confidenceThreshold >= 75) {
+        zonesToDisplay = 4;
+      } else if (confidenceThreshold >= 50) {
+        zonesToDisplay = 8;
+      } else if (confidenceThreshold >= 25) {
+        zonesToDisplay = 10;
+      } else {
+        zonesToDisplay = 12;
+      }
+      
+      const sortedZones = Object.entries(weaknessZones)
+        .map(([zone, data]) => ({
+          zone,
+          weaknessScore: Math.round(data.weaknessScore * 10) / 10,
+          sampleSize: data.sampleSize,
+          badOutcomes: data.badOutcomes,
+          confidence: data.confidence,
+          whiffs: data.whiffs,
+          weakContact: data.weakContact
+        }))
+        .sort((a, b) => b.weaknessScore - a.weaknessScore)
+        .slice(0, zonesToDisplay);
+      
+      res.json({
+        success: true,
+        zones: sortedZones,
+        metadata: {
+          threshold: confidenceThreshold,
+          zonesDisplayed: zonesToDisplay,
+          totalZonesAnalyzed: Object.keys(weaknessZones).length,
+          batter: selectedBatter,
+          team: selectedTeam
+        }
+      });
+      
+    } catch (error) {
+      console.error('Error calculating weakness zones:', error);
+      res.status(500).json({ 
+        error: 'calculation_error',
+        message: error.message 
+      });
+    }
+  });
+}
+
+// helper function to calculate weakness zones
+function calculateWeaknessZones(batter, confidenceThreshold) {
+  const weaknessZones = {};
+  
+  // get all pitch zones from batter's data
+  const zoneStats = batter.zoneAnalysis || {};
+  
+  // min. pitches required based on confidence threshold
+  const minPitchesRequired = calculateMinPitches(confidenceThreshold);
+  
+  Object.entries(zoneStats).forEach(([zone, stats]) => {
+    if (stats.pitches >= minPitchesRequired) {
+      // calculate weakness score based on bad outcomes
+      // bad outcomes = whiffs + weak contact
+      const badOutcomes = (stats.whiffs || 0) + (stats.weakContact || 0);
+      const weaknessScore = (badOutcomes / stats.pitches) * 100;
+      
+      // calculate confidence level
+      const confidence = calculateZoneConfidence(stats.pitches, badOutcomes);
+      
+      weaknessZones[zone] = {
+        weaknessScore,
+        sampleSize: stats.pitches,
+        badOutcomes,
+        confidence,
+        whiffs: stats.whiffs || 0,
+        weakContact: stats.weakContact || 0
+      };
+    }
+  });
+  
+  return weaknessZones;
+}
+
+function calculateMinPitches(confidenceThreshold) {
+  if (confidenceThreshold >= 90) return 15;
+  if (confidenceThreshold >= 75) return 10;
+  if (confidenceThreshold >= 50) return 7;
+  if (confidenceThreshold >= 25) return 5;
+  return 3;
+}
+
+function calculateZoneConfidence(pitches, badOutcomes) {
+  if (pitches >= 15 && badOutcomes >= 5) return 'High';
+  if (pitches >= 10 && badOutcomes >= 3) return 'Medium';
+  if (pitches >= 5) return 'Low';
+  return 'Very Low';
+}
+
+// ----- End Confidence Threshold Slider Endpoint -----
+
+
+// ---- PDF report  ----- //
+app.get('/api/generate-report', async (req, res) => {
+  try {
+    const { startDate, endDate, minVelocity, confidenceThreshold, selectedTeam, selectedBatter } = req.query;
+    
+    // fetch the data first
+    const formattedStart = formatDateForApi(startDate);
+    const formattedEnd = formatDateForApi(endDate);
+    
+    const pitches = await fetchPitchesByDateRange(formattedStart, formattedEnd);
+    const parsedMinVelocity = minVelocity ? parseFloat(minVelocity) : 0;
+    const teamsData = transformPitchDataToTeams(pitches, {}, parsedMinVelocity);
+    
+    // get specific batter data if selected
+    let batterData = null;
+    if (selectedTeam && selectedBatter && teamsData[selectedTeam]) {
+      batterData = teamsData[selectedTeam].find(b => b.batter === selectedBatter);
+      
+      // calculate weakness zones if confidence threshold provided
+      if (batterData && confidenceThreshold) {
+        const weaknessZones = calculateWeaknessZones(batterData, parseFloat(confidenceThreshold));
+        batterData.weaknessZones = weaknessZones;
+      }
+    }
+    
+    // prepare clean report data
+    const reportData = {
+      metadata: {
+        generatedAt: new Date().toISOString(),
+        dateRange: { start: startDate, end: endDate },
+        velocityRange: minVelocity ? `≥ ${minVelocity} mph` : 'All velocities',
+        confidenceThreshold: confidenceThreshold || 'Not applied',
+        selectedBatter: selectedBatter || 'All batters',
+        selectedTeam: selectedTeam || 'All teams'
+      },
+      summary: {
+        totalTeams: Object.keys(teamsData).length,
+        totalBatters: Object.values(teamsData).reduce((sum, team) => sum + team.length, 0),
+        totalPitchesProcessed: pitches.length
+      },
+      teamsData: selectedTeam ? { [selectedTeam]: teamsData[selectedTeam] } : teamsData,
+      batterDetail: batterData
+    };
+    
+    res.json({
+      success: true,
+      reportData
+    });
+    
+  } catch (error) {
+    console.error('Error generating report:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// helper function to format dates for API
+function formatDateForApi(dateStr) {
+  if (!dateStr) return null;
+  if (dateStr.includes('-')) return dateStr;
+  if (dateStr.length === 8) {
+    return `${dateStr.substring(0, 4)}-${dateStr.substring(4, 6)}-${dateStr.substring(6, 8)}`;
+  }
+  return dateStr;
+}
+
+// --- end -- Angela (2/25) ---- 
+
 
 // API health handler
 const apiHealthHandler = (req, res) => {
