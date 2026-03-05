@@ -178,7 +178,7 @@ html, body {
 }
 
 /* --- Premium Velocity Slider --- */
-input[type="range"]#minVelocity {
+input[type="range"]#maxVelocity {
   -webkit-appearance: none;
   width: 100%;
   height: 12px;
@@ -191,7 +191,7 @@ input[type="range"]#minVelocity {
 }
 
 /* The Draggable "Thumb" (Chrome/Safari/Edge) */
-input[type="range"]#minVelocity::-webkit-slider-thumb {
+input[type="range"]#maxVelocity::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
   width: 28px;
@@ -204,13 +204,13 @@ input[type="range"]#minVelocity::-webkit-slider-thumb {
   transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-input[type="range"]#minVelocity::-webkit-slider-thumb:hover {
+input[type="range"]#maxVelocity::-webkit-slider-thumb:hover {
   transform: scale(1.15); /* Pops up slightly when hovered */
   box-shadow: var(--shadow-lg);
 }
 
 /* The Draggable "Thumb" (Firefox compatibility) */
-input[type="range"]#minVelocity::-moz-range-thumb {
+input[type="range"]#maxVelocity::-moz-range-thumb {
   width: 24px;
   height: 24px;
   border-radius: 50%;
@@ -221,7 +221,7 @@ input[type="range"]#minVelocity::-moz-range-thumb {
   transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-input[type="range"]#minVelocity::-moz-range-thumb:hover {
+input[type="range"]#maxVelocity::-moz-range-thumb:hover {
   transform: scale(1.15);
   box-shadow: var(--shadow-lg);
 }

@@ -376,16 +376,16 @@ class FlashcardApp {
     CURRENT_SETTINGS = { ...DEFAULT_SETTINGS };
     this.render();
   }
-async loadDataRange(startDate, endDate, minVelocity = 0, customLoadingMessage = null) {
+async loadDataRange(startDate, endDate, maxVelocity = 105, customLoadingMessage = null) {
 try {
       this.currentScreen = 'loading';
       
       // Use the custom message if provided, otherwise fall back to the default
-      this.loadingMessage = customLoadingMessage || `Loading Data (with the Minimum Velocity of ${minVelocity} MPH)...`;
+      this.loadingMessage = customLoadingMessage || `Loading Data (with the Maximum Velocity of ${maxVelocity} MPH)...`;
       this.render();
       
       const response = await fetch(
-        `./api/teams/range?startDate=${startDate}&endDate=${endDate}&minVelocity=${minVelocity}`
+        `./api/teams/range?startDate=${startDate}&endDate=${endDate}&maxVelocity=${maxVelocity}`
       );
       
       if (!response.ok) throw new Error(`HTTP error: ${response.status}`);
@@ -405,7 +405,7 @@ try {
 
   // Add this helper function right below loadDataRange to handle the math for the Smart Buttons
 fetchSmartData(days) {
-      const minVel = document.getElementById('minVelocity').value;
+      const maxVel = document.getElementById('maxVelocity').value;
       let startStr = '';
       let endStr = '';
       let customMsg = 'Loading the Full Season...';
@@ -429,8 +429,7 @@ fetchSmartData(days) {
       // Retain the dates in the calendar memory
       this.lastStartDate = startStr;
       this.lastEndDate = endStr;
-
-      this.loadDataRange(startStr, endStr, minVel, customMsg);
+      this.loadDataRange(startStr, endStr, maxVel, customMsg);
   }
 
   showDateSelect() { this.currentScreen = 'dateSelect'; this.render(); }
@@ -488,10 +487,10 @@ fetchSmartData(days) {
         // 1. The Velocity Slider
         createElement('div', {},
           createElement('label', { style: { display: 'block', 'margin-bottom': '10px', 'font-weight': 'bold', 'font-size': '16px' } }, 
-            'Minimum Pitch Velocity'
+            'Maximum Pitch Velocity'
           ),
           createElement('input', {
-            id: 'minVelocity', type: 'range', min: '0', max: '105', value: '0',
+            id: 'maxVelocity', type: 'range', min: '0', max: '105', value: '105',
             style: { width: '100%', cursor: 'pointer' },
             oninput: (e) => {
               const val = e.target.value;
@@ -510,7 +509,7 @@ fetchSmartData(days) {
             }
           }),
           // Make sure the starting color matches the Light Blue exactly
-          createElement('div', { id: 'velValue', style: { textAlign: 'center', fontSize: '20px', fontWeight: 'bold', marginTop: '10px', color: '#3b82f6', transition: 'color 0.1s ease' } }, '0 MPH')
+          createElement('div', { id: 'velValue', style: { textAlign: 'center', fontSize: '20px', fontWeight: 'bold', marginTop: '10px', color: '#3b82f6', transition: 'color 0.1s ease' } }, '105 MPH')
         ),
 
 // 2. Custom Date Range (Main Feature with Calendar Pickers)
@@ -539,7 +538,7 @@ fetchSmartData(days) {
           createElement('button', {
             className: 'team-btn', style: { width: '100%', padding: '12px', fontSize: '16px' },
             onclick: () => {
-              const minVel = document.getElementById('minVelocity').value;
+              const maxVel = document.getElementById('maxVelocity').value;
               const startRaw = document.getElementById('startDate').value;
               const endRaw = document.getElementById('endDate').value;
               
@@ -552,7 +551,7 @@ fetchSmartData(days) {
               this.lastStartDate = startRaw;
               this.lastEndDate = endRaw;
 
-              this.loadDataRange(startRaw, endRaw, minVel);
+              this.loadDataRange(startRaw, endRaw, maxVel);
             }
           }, 'Load Custom Range')
         ),

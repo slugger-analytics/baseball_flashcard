@@ -269,9 +269,9 @@ function assessBuntThreat(batter) {
   return threat === 'Low' ? 'Low' : `${threat} (${reasons.join(', ')})`;
 }
 
-// (Task for VF): #4 fourth change was I added the minVelocity as a parameter to filter out pitches that don't meet 
-// the minimum velocity requirement before processing them into teams.
-function transformPitchDataToTeams(pitchData, existingData = {}, minVelocity = 0) {
+// (Task for VF): #4 fourth change was I added the maxVelocity as a parameter to filter out pitches that don't meet 
+// the maximum velocity requirement before processing them into teams.
+function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 999) {
 
   const teamsData = { ...existingData }, batterMap = new Map();
   Object.entries(teamsData).forEach(([team, batters]) => {
@@ -283,8 +283,8 @@ function transformPitchDataToTeams(pitchData, existingData = {}, minVelocity = 0
     // (Task for VF): #5 fifth change ok here is the velocity filtering logic:
     // we parse the pitch speed from the api data, using rel_speed or release_speed as the source and we defaulting to 0 if neither is available
     const pitchSpeed = parseFloat(pitch.rel_speed || pitch.release_speed  || 0);
-    // if a min velocity limit is requested and this pitch is slower than the limit, we skip it.
-    if (minVelocity > 0 && pitchSpeed < minVelocity) {
+    // if a max velocity limit is requested and this pitch is faster than the limit, we skip it.
+    if (maxVelocity < 999 && pitchSpeed > maxVelocity) {
       return;
     }
 
@@ -533,7 +533,7 @@ function getPitchAbbreviation(pitchType) {
 
 const teamsRangeHandler = async (req, res) => {
   try {
-    const { startDate, endDate, minVelocity } = req.query;
+    const { startDate, endDate, maxVelocity } = req.query;
     
     // check if the selected date range is in the future
     const today = new Date();
@@ -633,11 +633,11 @@ const teamsRangeHandler = async (req, res) => {
     // fetch pitches
     const pitches = await fetchPitchesByDateRange(formattedStart, formattedEnd);
     
-    // parse minVelocity
-    const parsedMinVelocity = minVelocity ? parseFloat(minVelocity) : 0;
+    // parse maxVelocity
+    const parsedMaxVelocity = maxVelocity ? parseFloat(maxVelocity) : 999;
     
     // transform data with velocity filter
-    const teamsData = transformPitchDataToTeams(pitches, {}, parsedMinVelocity);
+    const teamsData = transformPitchDataToTeams(pitches, {}, parsedMaxVelocity);
     
     // check if any data survived the velocity filter
     const totalPlayers = Object.values(teamsData).reduce((sum, team) => sum + team.length, 0);
@@ -658,7 +658,7 @@ const teamsRangeHandler = async (req, res) => {
         startDate: finalStartDate, 
         endDate: finalEndDate, 
         filesProcessed: pitches.length,
-        pitchesFilteredByVelocity: countPitchesByVelocity(pitches, parsedMinVelocity)
+        pitchesFilteredByVelocity: countPitchesByVelocity(pitches, parsedMaxVelocity)
       } 
     });
     
@@ -689,12 +689,11 @@ function getDatesInRange(startDateStr, endDateStr) {
 }
 
 // helper to count pitches that would be filtered by velocity
-function countPitchesByVelocity(pitches, minVelocity) {
-  if (minVelocity <= 0) return 0;
-  
+function countPitchesByVelocity(pitches, maxVelocity) {
+  if (maxVelocity >= 999) return 0;
   return pitches.filter(pitch => {
     const pitchSpeed = parseFloat(pitch.rel_speed || pitch.release_speed || 0);
-    return pitchSpeed < minVelocity;
+    return pitchSpeed > maxVelocity;
   }).length;
 }
 
@@ -903,15 +902,15 @@ function calculateZoneConfidence(pitches, badOutcomes) {
 // ---- PDF report  ----- //
 app.get('/api/generate-report', async (req, res) => {
   try {
-    const { startDate, endDate, minVelocity, confidenceThreshold, selectedTeam, selectedBatter } = req.query;
+    const { startDate, endDate, maxVelocity, confidenceThreshold, selectedTeam, selectedBatter } = req.query;
     
     // fetch the data first
     const formattedStart = formatDateForApi(startDate);
     const formattedEnd = formatDateForApi(endDate);
     
     const pitches = await fetchPitchesByDateRange(formattedStart, formattedEnd);
-    const parsedMinVelocity = minVelocity ? parseFloat(minVelocity) : 0;
-    const teamsData = transformPitchDataToTeams(pitches, {}, parsedMinVelocity);
+    const parsedMaxVelocity = maxVelocity ? parseFloat(maxVelocity) : 999;
+    const teamsData = transformPitchDataToTeams(pitches, {}, parsedMaxVelocity);
     
     // get specific batter data if selected
     let batterData = null;
@@ -930,7 +929,7 @@ app.get('/api/generate-report', async (req, res) => {
       metadata: {
         generatedAt: new Date().toISOString(),
         dateRange: { start: startDate, end: endDate },
-        velocityRange: minVelocity ? `≥ ${minVelocity} mph` : 'All velocities',
+        velocityRange: maxVelocity ? `≤ ${maxVelocity} mph` : 'All velocities',
         confidenceThreshold: confidenceThreshold || 'Not applied',
         selectedBatter: selectedBatter || 'All batters',
         selectedTeam: selectedTeam || 'All teams'
