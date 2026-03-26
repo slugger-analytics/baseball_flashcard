@@ -227,7 +227,7 @@ const stripPercents = (text) => {
   
   // let firstPitchText = stripPercents(tendencies?.firstStrike || `Swings ${firstPitchSwingRate} on first pitch`);
   let firstPitchText = tendencies?.firstStrike || `Swings ${firstPitchSwingRate} on first pitch`;
-  let sprayText = stripPercents(tendencies?.spray || 'All fields');
+  let sprayText = tendencies?.spray || 'All fields';
   const cleanedPowerSequence = stripPercents(powerSequence || 'Insufficient data');
 
   // The UI Slider (Aaron part)
