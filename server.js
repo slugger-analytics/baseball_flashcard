@@ -548,7 +548,7 @@ function getPitchAbbreviation(pitchType) {
 
 const teamsRangeHandler = async (req, res) => {
   try {
-    const { startDate, endDate, maxVelocity } = req.query;
+    const { startDate, endDate, maxVelocity, pitchGroup } = req.query;
     
     // check if the selected date range is in the future
     const today = new Date();
@@ -646,11 +646,26 @@ const teamsRangeHandler = async (req, res) => {
     }
     
     // fetch pitches
-    const pitches = await fetchPitchesByDateRange(formattedStart, formattedEnd);
-    
+    let pitches = await fetchPitchesByDateRange(formattedStart, formattedEnd);
+
+    // filter by pitch group if specified
+    if (pitchGroup && pitchGroup !== 'All') {
+      const fastballs = ['Fastball', 'Four-Seam', 'TwoSeamFastball', 'Sinker', 'Cutter'];
+      const breaking  = ['Slider', 'Curveball', 'KnuckleCurve', 'Sweeper'];
+      const offspeed  = ['Changeup', 'ChangeUp', 'Splitter', 'Knuckleball'];
+      pitches = pitches.filter(p => {
+        const pt = p.tagged_pitch_type || p.auto_pitch_type;
+        if (pitchGroup === 'Fastballs') return fastballs.includes(pt);
+        if (pitchGroup === 'Breaking')  return breaking.includes(pt);
+        if (pitchGroup === 'Offspeed')  return offspeed.includes(pt);
+        return true;
+      });
+      console.log(`🎯 Filtered down to ${pitches.length} ${pitchGroup} pitches`);
+    }
+
     // parse maxVelocity
     const parsedMaxVelocity = maxVelocity ? parseFloat(maxVelocity) : 999;
-    
+
     // transform data with velocity filter
     const teamsData = transformPitchDataToTeams(pitches, {}, parsedMaxVelocity);
     
