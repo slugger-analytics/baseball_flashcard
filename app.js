@@ -453,16 +453,17 @@ class FlashcardApp {
     CURRENT_SETTINGS = { ...DEFAULT_SETTINGS };
     this.render();
   }
-async loadDataRange(startDate, endDate, maxVelocity = 105, customLoadingMessage = null) {
+async loadDataRange(startDate, endDate, maxVelocity = 105, customLoadingMessage = null, pitchGroup = 'All') {
 try {
       this.currentScreen = 'loading';
       
       // Use the custom message if provided, otherwise fall back to the default
-      this.loadingMessage = customLoadingMessage || `Loading Data (with the Maximum Velocity of ${maxVelocity} MPH)...`;
+      const groupText = pitchGroup !== 'All' ? ` (${pitchGroup})` : '';
+      this.loadingMessage = customLoadingMessage || `Loading Data${groupText} (Max Vel: ${maxVelocity} MPH)...`;
       this.render();
       
       const response = await fetch(
-        `./api/teams/range?startDate=${startDate}&endDate=${endDate}&maxVelocity=${maxVelocity}`
+        `./api/teams/range?startDate=${startDate}&endDate=${endDate}&maxVelocity=${maxVelocity}&pitchGroup=${pitchGroup}`
       );
       
       if (!response.ok) throw new Error(`HTTP error: ${response.status}`);
@@ -483,6 +484,7 @@ try {
   // Add this helper function right below loadDataRange to handle the math for the Smart Buttons
 fetchSmartData(days) {
       const maxVel = document.getElementById('maxVelocity').value;
+      const pitchGroup = document.getElementById('pitchGroup').value;
       let startStr = '';
       let endStr = '';
       let customMsg = 'Loading the Full Season...';
@@ -506,8 +508,7 @@ fetchSmartData(days) {
       //TODO: KEEP!!! Retain the dates in the calendar memory: (will revert back once the dynamic query is back online)
       this.lastStartDate = startStr;
       this.lastEndDate = endStr;
-      this.loadDataRange(startStr, endStr, maxVel, customMsg);
-
+      this.loadDataRange(startStr, endStr, maxVel, customMsg, pitchGroup);
       /*
       else {
           // Hardcode the 2025 ALPB Season boundaries since the dynamic query is offline, for checkpoint #1
@@ -597,7 +598,25 @@ fetchSmartData(days) {
           }),
           // Make sure the starting color matches the Light Blue exactly
           createElement('div', { id: 'velValue', style: { textAlign: 'center', fontSize: '20px', fontWeight: 'bold', marginTop: '10px', color: '#3b82f6', transition: 'color 0.1s ease' } }, '105 MPH')
+          ),
+
+          // 1.5 Pitch Group Selector (Ryan Dull Feature)
+        createElement('div', { style: { marginTop: '15px' } },
+          createElement('label', { style: { display: 'block', 'margin-bottom': '10px', 'font-weight': 'bold', 'font-size': '16px' } }, 
+            'Pitch Type Filter'
+          ),
+          createElement('select', {
+            id: 'pitchGroup',
+            style: { width: '100%', padding: '10px', borderRadius: '4px', border: '1px solid #ccc', fontSize: '15px', backgroundColor: 'white', cursor: 'pointer' }
+          },
+            createElement('option', { value: 'All' }, 'All Pitches'),
+            createElement('option', { value: 'Fastballs' }, 'Fastballs Only (4S, 2S, CT, SI)'),
+            createElement('option', { value: 'Breaking' }, 'Breaking Balls Only (SL, CB)'),
+            createElement('option', { value: 'Offspeed' }, 'Offspeed Only (CH, SP)')
+          )
         ),
+
+
 
 // 2. Custom Date Range (Main Feature with Calendar Pickers)
         createElement('div', { style: { padding: '15px', backgroundColor: 'white', borderRadius: '8px', border: '1px solid #dee2e6' } },
@@ -626,6 +645,7 @@ fetchSmartData(days) {
             className: 'team-btn', style: { width: '100%', padding: '12px', fontSize: '16px' },
             onclick: () => {
               const maxVel = document.getElementById('maxVelocity').value;
+              const pitchGroup = document.getElementById('pitchGroup').value;
               const startRaw = document.getElementById('startDate').value;
               const endRaw = document.getElementById('endDate').value;
               
@@ -638,7 +658,7 @@ fetchSmartData(days) {
               this.lastStartDate = startRaw;
               this.lastEndDate = endRaw;
 
-              this.loadDataRange(startRaw, endRaw, maxVel);
+              this.loadDataRange(startRaw, endRaw, maxVel, null, pitchGroup);
             }
           }, 'Load Custom Range')
         ),

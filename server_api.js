@@ -495,7 +495,7 @@ function getPitchAbbreviation(pitchType) {
 
 app.get('/api/teams/range', async (req, res) => {
   try {
-    const { startDate, endDate } = req.query;
+    const { startDate, endDate, maxVelocity, pitchGroup } = req.query;
     
     if (!startDate || !endDate) {
       return res.status(400).json({ error: 'startDate and endDate are required' });
@@ -510,15 +510,40 @@ app.get('/api/teams/range', async (req, res) => {
     console.log(`  API format: ${formattedStartDate} to ${formattedEndDate}`);
     
     // Fetch all pitches for the date range
+    // Fetch all pitches for the date range
     const pitches = await fetchAllPitches({
       date_range_start: formattedStartDate,
       date_range_end: formattedEndDate
     });
     
     console.log(`✅ Fetched ${pitches.length} total pitches`);
+
+    // --- RYAN DULL FEATURE: FILTER PITCHES ---
+    let filteredPitches = pitches;
+    
+    if (maxVelocity && parseFloat(maxVelocity) < 105) {
+       filteredPitches = filteredPitches.filter(p => !p.rel_speed || p.rel_speed <= parseFloat(maxVelocity));
+    }
+
+    if (pitchGroup && pitchGroup !== 'All') {
+       const fastballs = ['Fastball', 'Four-Seam', 'TwoSeamFastball', 'Sinker', 'Cutter'];
+       const breaking = ['Slider', 'Curveball', 'KnuckleCurve', 'Sweeper']; 
+       const offspeed = ['Changeup', 'ChangeUp', 'Splitter', 'Knuckleball'];
+       
+       filteredPitches = filteredPitches.filter(p => {
+          const pt = p.tagged_pitch_type || p.auto_pitch_type;
+          if (pitchGroup === 'Fastballs') return fastballs.includes(pt);
+          if (pitchGroup === 'Breaking') return breaking.includes(pt);
+          if (pitchGroup === 'Offspeed') return offspeed.includes(pt);
+          return true;
+       });
+       console.log(`🎯 Filtered down to ${filteredPitches.length} ${pitchGroup} pitches`);
+    }
+    // -----------------------------------------
+
     console.log(`⚙️  Transforming pitch data to team format...`);
     
-    const teamsData = transformPitchDataToTeams(pitches);
+    const teamsData = transformPitchDataToTeams(filteredPitches);
     
     const teamCount = Object.keys(teamsData).length;
     const playerCount = Object.values(teamsData).reduce((sum, team) => sum + team.length, 0);
@@ -560,7 +585,7 @@ app.get('/api/game/:date/:stadium', async (req, res) => {
     
     console.log(`✅ Fetched ${pitches.length} pitches for game`);
     
-    const teamsData = transformPitchDataToTeams(pitches);
+    const teamsData = transformPitchDataToTeams(filteredPitches);
     
     res.json(teamsData);
   } catch (error) {
