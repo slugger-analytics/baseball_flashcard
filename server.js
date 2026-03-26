@@ -445,14 +445,29 @@ function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 9
         batter.tendencies.buntThreat = assessBuntThreat(batter);
 
         if (batter.atBats.length >= 5) {
-          const pullCount = batter.atBats.filter(ab => batter.handedness === 'LHB' ? ab.angle < -15 : ab.angle > 15).length;
-          const oppoCount = batter.atBats.filter(ab => batter.handedness === 'LHB' ? ab.angle > 15 : ab.angle < -15).length;
-          const pullPct = (pullCount / batter.atBats.length * 100);
-          const oppoPct = (oppoCount / batter.atBats.length * 100);
-          if (pullPct > 60) batter.tendencies.spray = `Pull hitter (${pullPct.toFixed(0)}%)`;
-          else if (oppoPct > 40) batter.tendencies.spray = `Opposite field (${oppoPct.toFixed(0)}%)`;
-          else batter.tendencies.spray = `All fields (P:${pullPct.toFixed(0)}% O:${oppoPct.toFixed(0)}%)`;
+          const pullCount = batter.atBats.filter(ab =>
+            batter.handedness === 'LHB' ? ab.angle > 15 : ab.angle < -15
+          ).length;
+
+          const centCount = batter.atBats.filter(ab =>
+            ab.angle >= -15 && ab.angle <= 15
+          ).length;
+
+          const oppoCount = batter.atBats.filter(ab =>
+            batter.handedness === 'LHB' ? ab.angle < -15 : ab.angle > 15
+          ).length;
+
+          const total = batter.atBats.length;
+          const pullPct = (pullCount / total * 100);
+          const centPct  = (centCount  / total * 100);
+          const oppoPct  = (oppoCount  / total * 100);
+
+          if (pullPct > 60)       batter.tendencies.spray = `Pull hitter (${pullPct.toFixed(0)}%)`;
+          else if (oppoPct > 40)  batter.tendencies.spray = `Opposite field (${oppoPct.toFixed(0)}%)`;
+          else                    batter.tendencies.spray = `All fields (P:${pullPct.toFixed(0)}% C:${centPct.toFixed(0)}% O:${oppoPct.toFixed(0)}%)`;
         }
+
+
         // Analyze pitch sequences that get OUTS (not just strikeouts)
         function analyzeOutSequences(outSequences) {
           if (!outSequences || outSequences.length === 0) {
