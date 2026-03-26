@@ -225,7 +225,8 @@ const stripPercents = (text) => {
     app.allowedZones = filteredVulnerableZones.map(z => z.zone);
   }
   
-  let firstPitchText = stripPercents(tendencies?.firstStrike || `Swings ${firstPitchSwingRate} on first pitch`);
+  // let firstPitchText = stripPercents(tendencies?.firstStrike || `Swings ${firstPitchSwingRate} on first pitch`);
+  let firstPitchText = tendencies?.firstStrike || `Swings ${firstPitchSwingRate} on first pitch`;
   let sprayText = stripPercents(tendencies?.spray || 'All fields');
   const cleanedPowerSequence = stripPercents(powerSequence || 'Insufficient data');
 
