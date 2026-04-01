@@ -569,104 +569,69 @@ function getPitchAbbreviation(pitchType) {
 const teamsRangeHandler = async (req, res) => {
   try {
     const { startDate, endDate, maxVelocity, pitchGroup } = req.query;
-    
-    // check if the selected date range is in the future
+
     const today = new Date();
     today.setUTCHours(0, 0, 0, 0);
-    
-    if (endDate) {
-      // parse the end date (handle both YYYYMMDD and YYYY-MM-DD formats)
-      let endDateObj;
 
-
-    const mdyMatch = endDate.match(/^(\d{2})-(\d{2})-(\d{4})$/);
-    const normalized = mdyMatch 
-      ? `${mdyMatch[3]}-${mdyMatch[1]}-${mdyMatch[2]}`
-      : endDate.includes('-') 
-      ? endDate 
-      : `${endDate.substring(0,4)}-${endDate.substring(4,6)}-${endDate.substring(6,8)}`;      
-    
-      endDateObj = new Date(normalized + 'T00:00:00Z');
-      //endDateObj.setHours(0, 0, 0, 0);
-      
-      if (endDateObj > today) {
-        console.log(`Future date detected: ${endDate}`);
-        return res.status(404).json({ 
-          error: 'future_date',
-          message: 'No Data Available Yet For The Selected Period' 
-        });
-      }
-    }
-    
-    // MAIN CHANGE: don't override user's dates with default logic
-    // only use default dates if NO dates are provided
-    let finalStartDate = startDate;
-    let finalEndDate = endDate;
-    
-    if (!startDate || !endDate) {
-      // only use default logic if user didn't provide dates
-      const currentYear = today.getFullYear();
-      const currentMonth = today.getMonth(); // 0-11
-      
-      // determine target year for ALPB season
-      let targetYear;
-      if (currentMonth < 3) { // Jan-Mar
-        targetYear = currentYear - 1;
-      } else {
-        targetYear = currentYear;
-      }
-      
-      // set defaults only if dates weren't provided
-      if (!startDate) {
-        finalStartDate = `${targetYear}0415`; // April 15
-      }
-      
-      if (!endDate) {
-        if (currentMonth >= 3 && currentMonth <= 9) { // Apr-Oct (in season)
-          const currentMonthFormatted = String(currentMonth + 1).padStart(2, '0');
-          const currentDayFormatted = String(today.getDate()).padStart(2, '0');
-          finalEndDate = `${targetYear}${currentMonthFormatted}${currentDayFormatted}`;
-        } else {
-          finalEndDate = `${targetYear}1015`; // October 15 (off-season)
-        }
-      }
-    }
-    
-    console.log(`\nFetching date range: ${finalStartDate} to ${finalEndDate}`);
-    
-    // format dates for API (add dashes if needed)
-   const formatForApi = (dateStr) => {
+    const parseDateInput = (dateStr) => {
       if (!dateStr) return null;
-
       const mdyMatch = dateStr.match(/^(\d{2})-(\d{2})-(\d{4})$/);
-      if (mdyMatch) {
-        return `${mdyMatch[3]}-${mdyMatch[1]}-${mdyMatch[2]}`;
-      }
-
+      if (mdyMatch) return `${mdyMatch[3]}-${mdyMatch[1]}-${mdyMatch[2]}`;
       if (dateStr.includes('-')) return dateStr;
       if (dateStr.length === 8) {
         return `${dateStr.substring(0, 4)}-${dateStr.substring(4, 6)}-${dateStr.substring(6, 8)}`;
       }
-      return dateStr;
+      return null;
     };
-    
-    const formattedStart = formatForApi(finalStartDate);
-    const formattedEnd = formatForApi(finalEndDate);
-    
-    // check if the date range contains any dates with actual data
-    const datesInRange = getDatesInRange(formattedStart, formattedEnd);
-    const hasDataInRange = datesInRange.some(date => DATES_WITH_DATA.has(date));
-    
-    if (!hasDataInRange) {
-      console.log(`No data available in range: ${formattedStart} to ${formattedEnd}`);
-      return res.status(404).json({
-        error: 'no_data',
-        message: 'No Data Available for this date range'
+
+    const getSeasonDefaults = (referenceDate) => {
+      const ref = referenceDate ? new Date(referenceDate) : new Date();
+      const year = ref.getFullYear();
+      const month = ref.getMonth();
+
+      if (month < 3) {
+        return { start: `${year - 1}-04-15`, end: `${year - 1}-10-15` };
+      } else if (month <= 9) {
+        const monthStr = String(ref.getMonth() + 1).padStart(2, '0');
+        const dayStr = String(ref.getDate()).padStart(2, '0');
+        return { start: `${year}-04-15`, end: `${year}-${monthStr}-${dayStr}` };
+      }
+      return { start: `${year}-04-15`, end: `${year}-10-15` };
+    };
+
+    const parsedStart = parseDateInput(startDate);
+    const parsedEnd = parseDateInput(endDate);
+    const seasonDefaults = getSeasonDefaults(today);
+
+    const finalStartDate = parsedStart || seasonDefaults.start;
+    const finalEndDate = parsedEnd || seasonDefaults.end;
+
+    if (new Date(`${finalStartDate}T00:00:00Z`) > new Date(`${finalEndDate}T00:00:00Z`)) {
+      return res.status(400).json({
+        error: 'invalid_range',
+        message: 'Start date must be on or before end date.'
       });
     }
-    
+
+    if (new Date(`${finalEndDate}T00:00:00Z`) > today) {
+      console.log(`Future date detected: ${finalEndDate}`);
+      return res.status(404).json({
+        error: 'future_date',
+        message: 'No Data Available Yet For The Selected Period'
+      });
+    }
+
+    console.log(`\nFetching date range: ${finalStartDate} to ${finalEndDate}`);
+
     // fetch pitches
-    let pitches = await fetchPitchesByDateRange(formattedStart, formattedEnd);
+    let pitches = await fetchPitchesByDateRange(finalStartDate, finalEndDate);
+
+    if (!pitches || pitches.length === 0) {
+      return res.status(404).json({
+        error: 'no_data',
+        message: 'No pitch data found for this date range. The season may not have started yet.'
+      });
+    }
 
     // filter by pitch group if specified
     if (pitchGroup && pitchGroup !== 'All') {

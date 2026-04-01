@@ -30,6 +30,35 @@ const DEFAULT_SETTINGS = {
   pitchCircleSize: 32
 };
 let CURRENT_SETTINGS = { ...DEFAULT_SETTINGS };
+
+// Helper function to compute default season dates dynamically
+function getDefaultSeasonDates() {
+  const today = new Date();
+  const currentYear = today.getFullYear();
+  const currentMonth = today.getMonth(); // 0-11
+
+  let seasonStart, seasonEnd;
+
+  // Atlantic League season: April 15 - October 15
+  // If we're before April (Jan-Mar), show last year's season
+  // If we're April-Oct, show current year's season
+  // If we're after Oct (Nov-Dec), show current year's season
+
+  if (currentMonth < 3) { // Jan-Mar
+    seasonStart = `${currentYear - 1}-04-15`;
+    seasonEnd = `${currentYear - 1}-10-15`;
+  } else if (currentMonth >= 3 && currentMonth <= 9) { // Apr-Oct (in season)
+    seasonStart = `${currentYear}-04-15`;
+    const monthStr = String(currentMonth + 1).padStart(2, '0');
+    const dayStr = String(today.getDate()).padStart(2, '0');
+    seasonEnd = `${currentYear}-${monthStr}-${dayStr}`;
+  } else { // Nov-Dec (off-season, show current year)
+    seasonStart = `${currentYear}-04-15`;
+    seasonEnd = `${currentYear}-10-15`;
+  }
+
+  return { start: seasonStart, end: seasonEnd };
+}
 function createElement(tag, props = {}, ...children) {
   const el = document.createElement(tag);
   Object.entries(props).forEach(([key, value]) => {
@@ -456,19 +485,44 @@ class FlashcardApp {
 async loadDataRange(startDate, endDate, maxVelocity = 105, customLoadingMessage = null, pitchGroup = 'All') {
 try {
       this.currentScreen = 'loading';
-      
+
       // Use the custom message if provided, otherwise fall back to the default
       const groupText = pitchGroup !== 'All' ? ` (${pitchGroup})` : '';
       this.loadingMessage = customLoadingMessage || `Loading Data${groupText} (Max Vel: ${maxVelocity} MPH)...`;
       this.render();
-      
+
       const response = await fetch(
         `./api/teams/range?startDate=${startDate}&endDate=${endDate}&maxVelocity=${maxVelocity}&pitchGroup=${pitchGroup}`
       );
-      
-      if (!response.ok) throw new Error(`HTTP error: ${response.status}`);
+
       const data = await response.json();
-      
+
+      if (!response.ok) {
+        // Parse error response and set contextual message
+        this.currentScreen = 'error';
+        const errorCode = data.error || 'unknown';
+
+        if (errorCode === 'future_date') {
+          this.error = 'The selected end date is in the future. Please select a date up to today.';
+        } else if (errorCode === 'no_data') {
+          this.error = 'No pitch data found for this date range. The Atlantic League season typically runs April 15 – October 15. Please select dates within the season.';
+        } else if (errorCode === 'no_data_velocity') {
+          this.error = `No pitch data found for the velocity range you selected (≤${maxVelocity} MPH). Try increasing the maximum velocity.`;
+        } else {
+          this.error = data.message || `Error loading data (${response.status})`;
+        }
+
+        this.render();
+        return;
+      }
+
+      if (!data.teamsData || Object.keys(data.teamsData).length === 0) {
+        this.currentScreen = 'error';
+        this.error = 'No pitch data found for this date range. The season may not have started yet.';
+        this.render();
+        return;
+      }
+
       TEAMS_DATA = data.teamsData;
       METADATA = data.metadata;
       this.currentScreen = 'teamSelect';
@@ -476,7 +530,7 @@ try {
     } catch (err) {
       console.error(err);
       this.currentScreen = 'error';
-      this.error = err.message;
+      this.error = `Error loading data: ${err.message}`;
       this.render();
     }
   }
@@ -503,21 +557,17 @@ fetchSmartData(days) {
           startStr = formatDate(start);
           endStr = formatDate(end);
           customMsg = `Loading the last ${days} days...`;
+      } else {
+          const defaultRange = getDefaultSeasonDates();
+          startStr = defaultRange.start;
+          endStr = defaultRange.end;
+          customMsg = 'Loading the current season date range...';
       }
-      
-      //TODO: KEEP!!! Retain the dates in the calendar memory: (will revert back once the dynamic query is back online)
+
+      // retain the dates in the calendar memory
       this.lastStartDate = startStr;
       this.lastEndDate = endStr;
       this.loadDataRange(startStr, endStr, maxVel, customMsg, pitchGroup);
-      /*
-      else {
-          // Hardcode the 2025 ALPB Season boundaries since the dynamic query is offline, for checkpoint #1
-          
-          startStr = '2025-04-25';
-          endStr = '2025-09-18';
-          customMsg = 'Loading the 2025 Season...';
-        }
-      */ 
 }
 
   showDateSelect() { this.currentScreen = 'dateSelect'; this.render(); }
@@ -552,7 +602,18 @@ fetchSmartData(days) {
   renderError() {
     return createElement('div', { className: 'team-select-screen' },
       createElement('h1', {}, 'Error Loading Data'),
-      createElement('p', {}, this.error),
+      createElement('div', {
+        style: {
+          backgroundColor: '#ffe6e6',
+          border: '2px solid #d32f2f',
+          borderRadius: '8px',
+          padding: '20px',
+          marginBottom: '20px',
+          color: '#c62828',
+          fontSize: '16px',
+          lineHeight: '1.5'
+        }
+      }, this.error),
       createElement('button', { className: 'team-btn', onclick: () => this.showDateSelect() }, 'Back')
     );
   }
@@ -673,8 +734,8 @@ fetchSmartData(days) {
             createElement('div', { style: { flex: 1 } },
               createElement('label', { style: { display: 'block', fontSize: '12px', marginBottom: '5px', color: '#666' } }, 'Start Date'),
               createElement('input', {
-                id: 'startDate', type: 'date', //TODO: DELETE HARDCODED DATES ONCE THE DYNAMIC QUERY IS BACK ONLINE: 2025-04-25 to 2025-09-18
-                value: this.lastStartDate || '2025-04-25', // <--- NEW: Injects saved memory, or stays blank if first load
+                id: 'startDate', type: 'date',
+                value: this.lastStartDate || getDefaultSeasonDates().start,
                 style: { width: '100%', padding: '10px', borderRadius: '4px', border: '1px solid #ccc', cursor: 'pointer' }
               })
             ),
@@ -682,7 +743,7 @@ fetchSmartData(days) {
               createElement('label', { style: { display: 'block', fontSize: '12px', marginBottom: '5px', color: '#666' } }, 'End Date'),
               createElement('input', {
                 id: 'endDate', type: 'date',
-                value: this.lastEndDate || '2025-09-18', // <--- NEW: Injects saved memory, or stays blank if first load
+                value: this.lastEndDate || getDefaultSeasonDates().end,
                 style: { width: '100%', padding: '10px', borderRadius: '4px', border: '1px solid #ccc', cursor: 'pointer' }
               })
             )
