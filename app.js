@@ -36,25 +36,27 @@ function getDefaultSeasonDates() {
   const today = new Date();
   const currentYear = today.getFullYear();
   const currentMonth = today.getMonth(); // 0-11
+  const currentDay = today.getDate();
+
+  // Season hasn't started yet if we're before April 15
+  const seasonHasStarted = currentMonth > 3 || (currentMonth === 3 && currentDay >= 15);
 
   let seasonStart, seasonEnd;
 
-  // Atlantic League season: April 15 - October 15
-  // If we're before April (Jan-Mar), show last year's season
-  // If we're April-Oct, show current year's season
-  // If we're after Oct (Nov-Dec), show current year's season
-
-  if (currentMonth < 3) { // Jan-Mar
+  if (!seasonHasStarted) {
+    // Jan 1 – Apr 14: current season hasn't started yet, show last year's full season
     seasonStart = `${currentYear - 1}-04-15`;
-    seasonEnd = `${currentYear - 1}-10-15`;
-  } else if (currentMonth >= 3 && currentMonth <= 9) { // Apr-Oct (in season)
+    seasonEnd   = `${currentYear - 1}-10-15`;
+  } else if (currentMonth <= 9) {
+    // Apr 15 – Oct 31: in-season, show season start through today
     seasonStart = `${currentYear}-04-15`;
     const monthStr = String(currentMonth + 1).padStart(2, '0');
-    const dayStr = String(today.getDate()).padStart(2, '0');
+    const dayStr   = String(currentDay).padStart(2, '0');
     seasonEnd = `${currentYear}-${monthStr}-${dayStr}`;
-  } else { // Nov-Dec (off-season, show current year)
+  } else {
+    // Nov – Dec: off-season, show the completed current year's season
     seasonStart = `${currentYear}-04-15`;
-    seasonEnd = `${currentYear}-10-15`;
+    seasonEnd   = `${currentYear}-10-15`;
   }
 
   return { start: seasonStart, end: seasonEnd };
@@ -504,12 +506,16 @@ try {
 
         if (errorCode === 'future_date') {
           this.error = 'The selected end date is in the future. Please select a date up to today.';
+          this.currentScreen = 'error';
         } else if (errorCode === 'no_data') {
-          this.error = 'No pitch data found for this date range. The Atlantic League season typically runs April 15 – October 15. Please select dates within the season.';
+          this.noDataError = 'No pitch data found for this date range. The season may not have started yet.';
+          this.currentScreen = 'dateSelect';
         } else if (errorCode === 'no_data_velocity') {
-          this.error = `No pitch data found for the velocity range you selected (≤${maxVelocity} MPH). Try increasing the maximum velocity.`;
+          this.noDataError = `No pitch data found for the velocity range you selected (≤${maxVelocity} MPH). Try increasing the maximum velocity.`;
+          this.currentScreen = 'dateSelect';
         } else {
           this.error = data.message || `Error loading data (${response.status})`;
+          this.currentScreen = 'error';
         }
 
         this.render();
@@ -517,8 +523,8 @@ try {
       }
 
       if (!data.teamsData || Object.keys(data.teamsData).length === 0) {
-        this.currentScreen = 'error';
-        this.error = 'No pitch data found for this date range. The season may not have started yet.';
+        this.noDataError = 'No pitch data found for this date range. The season may not have started yet.';
+        this.currentScreen = 'dateSelect';
         this.render();
         return;
       }
@@ -558,10 +564,15 @@ fetchSmartData(days) {
           endStr = formatDate(end);
           customMsg = `Loading the last ${days} days...`;
       } else {
-          const defaultRange = getDefaultSeasonDates();
-          startStr = defaultRange.start;
-          endStr = defaultRange.end;
-          customMsg = 'Loading the current season date range...';
+          const today = new Date();
+          const currentYear = today.getFullYear();
+          const currentMonth = today.getMonth(); // 0-11
+          const currentDay = today.getDate();
+          const seasonComplete = currentMonth > 9 || (currentMonth === 9 && currentDay > 15);
+          const lastYear = seasonComplete ? currentYear : currentYear - 1;
+          startStr = `${lastYear}-04-15`;
+          endStr   = `${lastYear}-10-15`;
+          customMsg = `Loading the ${lastYear} Full Season...`;
       }
 
       // retain the dates in the calendar memory
@@ -570,7 +581,7 @@ fetchSmartData(days) {
       this.loadDataRange(startStr, endStr, maxVel, customMsg, pitchGroup);
 }
 
-  showDateSelect() { this.currentScreen = 'dateSelect'; this.render(); }
+  showDateSelect() { this.currentScreen = 'dateSelect'; this.validationError = null; this.noDataError = null; this.render(); }
   showTeamSelect() { this.currentScreen = 'teamSelect'; this.selectedTeam = null; this.render(); }
   showLineup(team) {
     this.currentScreen = 'lineup';
@@ -735,7 +746,7 @@ fetchSmartData(days) {
               createElement('label', { style: { display: 'block', fontSize: '12px', marginBottom: '5px', color: '#666' } }, 'Start Date'),
               createElement('input', {
                 id: 'startDate', type: 'date',
-                value: this.lastStartDate || getDefaultSeasonDates().start,
+                value: this.lastStartDate || '',
                 style: { width: '100%', padding: '10px', borderRadius: '4px', border: '1px solid #ccc', cursor: 'pointer' }
               })
             ),
@@ -743,7 +754,7 @@ fetchSmartData(days) {
               createElement('label', { style: { display: 'block', fontSize: '12px', marginBottom: '5px', color: '#666' } }, 'End Date'),
               createElement('input', {
                 id: 'endDate', type: 'date',
-                value: this.lastEndDate || getDefaultSeasonDates().end,
+                value: this.lastEndDate || '',
                 style: { width: '100%', padding: '10px', borderRadius: '4px', border: '1px solid #ccc', cursor: 'pointer' }
               })
             )
@@ -755,19 +766,40 @@ fetchSmartData(days) {
               const pitchGroup = document.getElementById('pitchGroup').value;
               const startRaw = document.getElementById('startDate').value;
               const endRaw = document.getElementById('endDate').value;
-              
+
               if (!startRaw || !endRaw) {
-                  alert("Please select both a Start Date and an End Date before loading.");
-                  return; 
+                this.validationError = 'Please select both a Start Date and an End Date before loading.';
+                this.noDataError = null;
+                this.render();
+                return;
               }
 
-              // <--- NEW: Save the exact dates to memory right before fetching
+              if (endRaw < startRaw) {
+                this.validationError = 'Invalid Date Range: End date cannot be before start date.';
+                this.noDataError = null;
+                this.render();
+                return;
+              }
+
+              this.validationError = null;
+              this.noDataError = null;
               this.lastStartDate = startRaw;
               this.lastEndDate = endRaw;
-
               this.loadDataRange(startRaw, endRaw, maxVel, null, pitchGroup);
             }
-          }, 'Load Custom Range')
+          }, 'Load Custom Range'),
+          this.validationError ? createElement('div', {
+            style: {
+              marginTop: '10px', backgroundColor: '#ffe6e6', border: '2px solid #d32f2f',
+              borderRadius: '6px', padding: '12px', color: '#c62828', fontSize: '14px'
+            }
+          }, this.validationError) : null,
+          this.noDataError ? createElement('div', {
+            style: {
+              marginTop: '10px', backgroundColor: '#ffe6e6', border: '2px solid #d32f2f',
+              borderRadius: '6px', padding: '12px', color: '#c62828', fontSize: '14px'
+            }
+          }, this.noDataError) : null
         ),
 
         // 3. Quick Options (Smaller, secondary buttons)
@@ -790,7 +822,7 @@ createElement('div', {},
               // Deep Navy to match the "Filter Trackman Data" Title
               className: 'team-btn', style: { padding: '8px 10px', fontSize: '13px', flex: 1, background: '#1e293b', border: 'none', boxShadow: 'none' },
               onclick: () => this.fetchSmartData(null)
-            }, 'Load Full Season')
+            }, 'Load Last Full Season')
           )
         )
       )
