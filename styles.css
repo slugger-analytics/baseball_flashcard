@@ -52,15 +52,22 @@ html, body {
 }
 
 .team-select-screen h1 {
-  font-size: 48px;
+  font-size: 52px;
   font-weight: 800; /* Bolder, more modern weight */
   letter-spacing: -1px; /* Tighter letter spacing looks sleeker */
   margin-bottom: 12px;
   color: var(--text);
-  background: linear-gradient(135deg, #1e293b 0%, #3b82f6 100%);
+  background: linear-gradient(90deg, #1e293b 0%, #3b82f6 50%, #1e293b 100%);
+  background-size: 200% auto;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
+  animation: logo-gradient-flow 35s linear infinite;
+}
+
+@keyframes logo-gradient-flow {
+  0%   { background-position: 0% center; }
+  100% { background-position: 200% center; }
 }
 
 .team-select-screen p {
