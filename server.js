@@ -71,6 +71,12 @@ const TEAM_DISPLAY_NAMES = {
   'HAG_FLY': 'Hagerstown Flying Boxcars'
 };
 
+/**
+ * Makes an authenticated GET request to the SLUGGER API.
+ * @param {string} endpoint - API path (e.g. '/pitches').
+ * @param {Object} [params={}] - Query parameters to include. Defaults `limit` to 1000.
+ * @returns {Promise<Object>} Parsed JSON response body.
+ */
 async function sluggerRequest(endpoint, params = {}) {
   const response = await axios.get(`${SLUGGER_CONFIG.baseUrl}${endpoint}`, {
     headers: { 'x-api-key': SLUGGER_CONFIG.apiKey, 'Content-Type': 'application/json' },
@@ -79,6 +85,12 @@ async function sluggerRequest(endpoint, params = {}) {
   return response.data;
 }
 
+/**
+ * Fetches all pages from a paginated SLUGGER API endpoint (up to 10 pages / 10,000 records).
+ * @param {string} endpoint - API path to paginate (e.g. '/pitches').
+ * @param {Object} [params={}] - Additional query parameters merged into each page request.
+ * @returns {Promise<Array>} Combined array of all records across all pages.
+ */
 async function fetchAllPages(endpoint, params = {}) {
   let allData = [], page = 1, hasMore = true;
   while (hasMore && page <= 10) {
@@ -93,6 +105,10 @@ async function fetchAllPages(endpoint, params = {}) {
   return allData;
 }
 
+/**
+ * Populates in-memory lookup caches for players, teams, and ballparks on server start.
+ * Must complete before the server begins handling requests.
+ */
 async function populateLookupCaches() {
   console.log('Populating lookup caches...');
   try {
@@ -112,37 +128,33 @@ async function populateLookupCaches() {
   }
 }
 
+/**
+ * Resolves a player ID to a display name using the in-memory cache.
+ * @param {string} id - SLUGGER player UUID.
+ * @returns {string} Player's full name, or a fallback identifier if not found.
+ */
 function getPlayerName(id) {
   return lookupCache.players.get(id)?.player_name || `Player-${id?.substring(0, 8) || 'Unknown'}`;
 }
 
+/**
+ * Resolves a team code to a display name using the in-memory cache.
+ * @param {string} code - SLUGGER team code (e.g. 'YOR').
+ * @returns {string} Team display name, or the raw code as fallback.
+ */
 function getTeamName(code) {
   return lookupCache.teams.get(code)?.team_name || TEAM_DISPLAY_NAMES[code] || code;
 }
 
-// Known dates with actual game data (from our data exploration)
-const DATES_WITH_DATA = new Set([
-  '2024-05-03', '2024-05-04', '2024-05-05', '2024-05-06', '2024-05-07', '2024-05-08', '2024-05-09',
-  '2024-05-10', '2024-05-11', '2024-05-12', '2024-05-14', '2024-05-15', '2024-05-16', '2024-05-17',
-  '2024-05-18', '2024-05-19', '2024-05-21', '2024-05-22', '2024-05-23', '2024-05-24', '2024-05-25',
-  '2024-05-26', '2024-05-27', '2024-05-28', '2024-05-29', '2024-05-30', '2024-05-31',
-  '2024-06-01', '2024-06-02', '2024-06-04', '2024-06-05', '2024-06-06', '2024-06-07', '2024-06-08',
-  '2024-06-09', '2024-06-11', '2024-06-12', '2024-06-13', '2024-06-14', '2024-06-15', '2024-06-16',
-  '2024-06-18', '2024-06-19', '2024-06-20', '2024-06-21', '2024-06-22', '2024-06-23', '2024-06-25',
-  '2024-06-26', '2024-06-27', '2024-06-28', '2024-06-29', '2024-06-30',
-  '2024-07-02', '2024-07-03', '2024-07-04', '2024-07-05', '2024-07-06', '2024-07-07', '2024-07-09',
-  '2024-07-10', '2024-07-11', '2024-07-12', '2024-07-13', '2024-07-14', '2024-07-16', '2024-07-17',
-  '2024-07-18', '2024-07-19', '2024-07-20', '2024-07-21', '2024-07-23', '2024-07-31',
-  '2024-08-04',
-  '2025-04-25', '2025-04-26', '2025-04-27', '2025-04-28', '2025-04-29', '2025-04-30'
-]);
 
-// OPTIMIZED: Only fetch dates that have actual game data
 
-//new:
-const BASE_URL = "https://1ywv9dczq5.execute-api.us-east-2.amazonaws.com/ALPBAPI";
-
-async function fetchPitchesByDateRange(startDateStr, endDateStr) { 
+/**
+ * Fetches all pitch records for a date range from the SLUGGER API, with in-memory caching.
+ * @param {string} startDateStr - Start date in YYYY-MM-DD format.
+ * @param {string} endDateStr - End date in YYYY-MM-DD format.
+ * @returns {Promise<Array>} Array of raw pitch objects, or empty array on error.
+ */
+async function fetchPitchesByDateRange(startDateStr, endDateStr) {
   const cacheKey = `${startDateStr}_${endDateStr}`;
 
   if (pitchDataCache.has(cacheKey)) {
@@ -169,7 +181,11 @@ async function fetchPitchesByDateRange(startDateStr, endDateStr) {
     }
 }
 
-// Better steal threat assessment
+/**
+ * Scores a batter's steal threat level based on stolen base history and speed indicators.
+ * @param {Object} batter - Batter data object built by transformPitchDataToTeams.
+ * @returns {string} 'Low', 'Moderate (reason)', or 'High (reason)'.
+ */
 function assessStealThreat(batter) {
   let stealScore = 0;
   const reasons = [];
@@ -227,7 +243,11 @@ function assessStealThreat(batter) {
   return threat === 'Low' ? 'Low' : `${threat} (${reasons.join(', ')})`;
 }
 
-// Better bunt threat assessment
+/**
+ * Scores a batter's bunt threat level based on bunt history, contact rate, and ground ball tendency.
+ * @param {Object} batter - Batter data object built by transformPitchDataToTeams.
+ * @returns {string} 'Low', 'Moderate (reason)', or 'High (reason)'.
+ */
 function assessBuntThreat(batter) {
   let buntScore = 0;
   const reasons = [];
@@ -269,8 +289,14 @@ function assessBuntThreat(batter) {
   return threat === 'Low' ? 'Low' : `${threat} (${reasons.join(', ')})`;
 }
 
-// (Task for VF): #4 fourth change was I added the maxVelocity as a parameter to filter out pitches that don't meet 
-// the maximum velocity requirement before processing them into teams.
+/**
+ * Transforms a flat array of raw pitch records into a structured teams → batters data object.
+ * Computes per-batter stats, zone analysis, pitch sequences, and tendency labels.
+ * @param {Array} pitchData - Raw pitch records from the SLUGGER API.
+ * @param {Object} [existingData={}] - Existing teams data to merge into (used for incremental builds).
+ * @param {number} [maxVelocity=999] - Pitches above this speed (mph) are excluded.
+ * @returns {Object} Map of team name → array of batter stat objects.
+ */
 function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 999) {
 
   const teamsData = { ...existingData }, batterMap = new Map();
@@ -280,10 +306,7 @@ function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 9
 
   pitchData.forEach(pitch => {
 
-    // (Task for VF): #5 fifth change ok here is the velocity filtering logic:
-    // we parse the pitch speed from the api data, using rel_speed or release_speed as the source and we defaulting to 0 if neither is available
-    const pitchSpeed = parseFloat(pitch.rel_speed || pitch.release_speed  || 0);
-    // if a max velocity limit is requested and this pitch is faster than the limit, we skip it.
+    const pitchSpeed = parseFloat(pitch.rel_speed || pitch.release_speed || 0);
     if (maxVelocity < 999 && pitchSpeed > maxVelocity) {
       return;
     }
@@ -374,10 +397,7 @@ function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 9
       if (pitch.play_result.includes('CaughtStealing')) batterData.caughtStealing++;
       if (pitch.play_result.includes('Bunt') || pitch.pitch_call.includes('Bunt')) batterData.bunts++;
       if (pitch.pitch_call === 'InPlay' && pitch.exit_speed) {
-        if (batterData.atBats.length < 5) {
-          console.log(`${batterData.batter}: direction raw value = ${pitch.direction}, type = ${typeof pitch.direction}`);
-        }
-        batterData.atBats.push({ 
+        batterData.atBats.push({
           launchAngle: pitch.angle || 0,
           direction: pitch.direction || 0, 
           distance: pitch.distance || 0, 
@@ -473,12 +493,6 @@ function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 9
           const centPct = (centCount / total * 100);
           const oppoPct = (oppoCount / total * 100);
 
-          // Debug output
-          if (batter.atBats.length >= 5 && batter.batter.includes(' ')) {
-            console.log(`${batter.batter}: Pull=${pullCount}, Center=${centCount}, Oppo=${oppoCount}, Total=${total}`);
-            console.log(`  Percentages: P:${pullPct.toFixed(0)}% C:${centPct.toFixed(0)}% O:${oppoPct.toFixed(0)}%`);
-          }
-
           if (pullPct > 60) {
             batter.tendencies.spray = `Pull hitter (${pullPct.toFixed(0)}%)`;
           } else if (oppoPct > 40) {
@@ -549,6 +563,13 @@ function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 9
   return teamsData;
 }
 
+/**
+ * Maps a pitch's plate coordinates to a named strike zone (e.g. 'High-In', 'Mid-Out').
+ * @param {number} plateSide - Horizontal plate position in feet (negative = catcher's left).
+ * @param {number} plateHeight - Vertical plate position in feet above the ground.
+ * @param {string} handedness - Batter handedness: 'LHB' or 'RHB'.
+ * @returns {string} Zone label in the format '<Vertical>-<Horizontal>'.
+ */
 function getZoneFromLocation(plateSide, plateHeight, handedness) {
   const isInside = (handedness === 'LHB' && plateSide > 0.33) || (handedness === 'RHB' && plateSide < -0.33);
   const isOutside = (handedness === 'LHB' && plateSide < -0.33) || (handedness === 'RHB' && plateSide > 0.33);
@@ -558,14 +579,26 @@ function getZoneFromLocation(plateSide, plateHeight, handedness) {
   return `${vertical}-${horizontal}`;
 }
 
+/**
+ * Converts a full Trackman pitch type name to its display abbreviation.
+ * @param {string} pitchType - Raw pitch type string from the API (e.g. 'Four-Seam', 'Slider').
+ * @returns {string} Two-letter abbreviation (e.g. '4S', 'SL'). Defaults to 'FB' if unrecognized.
+ */
 function getPitchAbbreviation(pitchType) {
   if (!pitchType || pitchType === 'Undefined') return 'FB';
   const abbrev = { 'Fastball': 'FB', 'Four-Seam': '4S', 'TwoSeamFastball': '2S', 'Sinker': 'SI', 'Cutter': 'FC', 'Slider': 'SL', 'Curveball': 'CB', 'Changeup': 'CH', 'ChangeUp': 'CH', 'Splitter': 'SP', 'Knuckleball': 'KN' };
   return abbrev[pitchType] || 'FB';
 }
 
-// -------- Angela (2/25) -----
-
+/**
+ * GET /api/teams/range
+ * Returns batter scouting data for a given date range.
+ * @query {string} startDate - Start date (YYYY-MM-DD, YYYYMMDD, or MM-DD-YYYY).
+ * @query {string} endDate - End date. Must not be in the future.
+ * @query {number} [maxVelocity] - Exclude pitches faster than this speed (mph).
+ * @query {string} [pitchGroup] - Filter by pitch category: 'Fastballs', 'Breaking', or 'Offspeed'.
+ * @returns {Object} { teamsData, metadata }
+ */
 const teamsRangeHandler = async (req, res) => {
   try {
     const { startDate, endDate, maxVelocity, pitchGroup } = req.query;
@@ -584,24 +617,17 @@ const teamsRangeHandler = async (req, res) => {
       return null;
     };
 
-    const getSeasonDefaults = (referenceDate) => {
-      const ref = referenceDate ? new Date(referenceDate) : new Date();
-      const year = ref.getFullYear();
-      const month = ref.getMonth();
-
-      if (month < 3) {
-        return { start: `${year - 1}-04-15`, end: `${year - 1}-10-15` };
-      } else if (month <= 9) {
-        const monthStr = String(ref.getMonth() + 1).padStart(2, '0');
-        const dayStr = String(ref.getDate()).padStart(2, '0');
-        return { start: `${year}-04-15`, end: `${year}-${monthStr}-${dayStr}` };
-      }
-      return { start: `${year}-04-15`, end: `${year}-10-15` };
+    const getSeasonDefaults = () => {
+      const todayStr = new Date().toISOString().slice(0, 10);
+      const start = '2026-04-21';
+      if (todayStr < start) return { start, end: start };
+      if (todayStr <= '2026-10-15') return { start, end: todayStr };
+      return { start, end: '2026-10-15' };
     };
 
     const parsedStart = parseDateInput(startDate);
     const parsedEnd = parseDateInput(endDate);
-    const seasonDefaults = getSeasonDefaults(today);
+    const seasonDefaults = getSeasonDefaults();
 
     const finalStartDate = parsedStart || seasonDefaults.start;
     const finalEndDate = parsedEnd || seasonDefaults.end;
@@ -684,26 +710,12 @@ const teamsRangeHandler = async (req, res) => {
 };
 
 
-// helper function to get all dates between two dates
-function getDatesInRange(startDateStr, endDateStr) {
-  const dates = [];
-  const start = new Date(startDateStr + 'T00:00:00Z'); 
-  const end = new Date(endDateStr + 'T00:00:00Z');
-  
-  const current = new Date(start);
-  while (current <= end) {
-    const year = current.getUTCFullYear();
-    const month = String(current.getUTCMonth() + 1).padStart(2, '0');
-    const day = String(current.getUTCDate()).padStart(2, '0');
-
-    dates.push(`${year}-${month}-${day}`);
-    current.setUTCDate(current.getUTCDate() + 1);
-  }
-  
-  return dates;
-}
-
-// helper to count pitches that would be filtered by velocity
+/**
+ * Counts how many pitches in an array exceed the velocity cap (used for response metadata).
+ * @param {Array} pitches - Array of raw pitch objects.
+ * @param {number} maxVelocity - Velocity ceiling in mph.
+ * @returns {number} Number of pitches that would be excluded by the cap.
+ */
 function countPitchesByVelocity(pitches, maxVelocity) {
   if (maxVelocity >= 999) return 0;
   return pitches.filter(pitch => {
@@ -712,53 +724,47 @@ function countPitchesByVelocity(pitches, maxVelocity) {
   }).length;
 }
 
-
-// -------- Confidence Threshold Slider Endpoint  -----
-
-app.post('/api/weakness-zones', async (req, res) => {
+/**
+ * POST /api/weakness-zones
+ * Calculates and ranks a batter's weakness zones by confidence threshold.
+ * @body {number} confidenceThreshold - Minimum confidence level (0–100); higher = fewer, more reliable zones.
+ * @body {Object} teamsData - The full teamsData object returned by GET /api/teams/range.
+ * @body {string} selectedTeam - Team name key in teamsData.
+ * @body {string} selectedBatter - Batter name to analyze.
+ * @returns {Object} { success, zones: Array, metadata }
+ */
+const weaknessZonesHandler = async (req, res) => {
   try {
     const { confidenceThreshold, teamsData, selectedTeam, selectedBatter } = req.body;
-    
+
     if (!teamsData || !selectedTeam || !selectedBatter) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         error: 'missing_data',
-        message: 'Missing required data: teamsData, selectedTeam, or selectedBatter' 
+        message: 'Missing required data: teamsData, selectedTeam, or selectedBatter'
       });
     }
-    
-    // the specific batter's data
+
     const batter = teamsData[selectedTeam]?.find(b => b.batter === selectedBatter);
-    
+
     if (!batter) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         error: 'batter_not_found',
-        message: `Batter ${selectedBatter} not found in team ${selectedTeam}` 
+        message: `Batter ${selectedBatter} not found in team ${selectedTeam}`
       });
     }
-    
-    console.log(`Calculating weakness zones for ${selectedBatter} with threshold: ${confidenceThreshold}%`);
-    
-    // calculate weakness zones based on confidence threshold
+
     const weaknessZones = calculateWeaknessZones(batter, confidenceThreshold);
-    
-    // determine number of zones to display based on threshold
-    // higher threshold = more selective = fewer zones
+
     let zonesToDisplay;
-    if (confidenceThreshold >= 75) {
-      zonesToDisplay = 4; // most selective
-    } else if (confidenceThreshold >= 50) {
-      zonesToDisplay = 8; // moderately  selective
-    } else if (confidenceThreshold >= 25) {
-      zonesToDisplay = 10; // Sslightly selective
-    } else {
-      zonesToDisplay = 12; // least selective (show all)
-    }
-    
-    // sort zones by weakness score and take top N
+    if (confidenceThreshold >= 75)      zonesToDisplay = 4;
+    else if (confidenceThreshold >= 50) zonesToDisplay = 8;
+    else if (confidenceThreshold >= 25) zonesToDisplay = 10;
+    else                                zonesToDisplay = 12;
+
     const sortedZones = Object.entries(weaknessZones)
       .map(([zone, data]) => ({
         zone,
-        weaknessScore: Math.round(data.weaknessScore * 10) / 10, // Round to 1 decimal
+        weaknessScore: Math.round(data.weaknessScore * 10) / 10,
         sampleSize: data.sampleSize,
         badOutcomes: data.badOutcomes,
         confidence: data.confidence,
@@ -767,9 +773,7 @@ app.post('/api/weakness-zones', async (req, res) => {
       }))
       .sort((a, b) => b.weaknessScore - a.weaknessScore)
       .slice(0, zonesToDisplay);
-    
-    console.log(`Found ${Object.keys(weaknessZones).length} zones, displaying top ${zonesToDisplay}`);
-    
+
     res.json({
       success: true,
       zones: sortedZones,
@@ -781,88 +785,25 @@ app.post('/api/weakness-zones', async (req, res) => {
         team: selectedTeam
       }
     });
-    
+
   } catch (error) {
     console.error('Error calculating weakness zones:', error);
-    res.status(500).json({ 
-      error: 'calculation_error',
-      message: error.message 
-    });
+    res.status(500).json({ error: 'calculation_error', message: error.message });
   }
-});
+};
 
-//  add route with BASE_PATH if needed
+app.post('/api/weakness-zones', weaknessZonesHandler);
 if (BASE_PATH) {
-  app.post(`${BASE_PATH}/api/weakness-zones`, async (req, res) => {
-    // handler as above
-    try {
-      const { confidenceThreshold, teamsData, selectedTeam, selectedBatter } = req.body;
-      
-      if (!teamsData || !selectedTeam || !selectedBatter) {
-        return res.status(400).json({ 
-          error: 'missing_data',
-          message: 'Missing required data: teamsData, selectedTeam, or selectedBatter' 
-        });
-      }
-      
-      const batter = teamsData[selectedTeam]?.find(b => b.batter === selectedBatter);
-      
-      if (!batter) {
-        return res.status(404).json({ 
-          error: 'batter_not_found',
-          message: `Batter ${selectedBatter} not found in team ${selectedTeam}` 
-        });
-      }
-      
-      const weaknessZones = calculateWeaknessZones(batter, confidenceThreshold);
-      
-      let zonesToDisplay;
-      if (confidenceThreshold >= 75) {
-        zonesToDisplay = 4;
-      } else if (confidenceThreshold >= 50) {
-        zonesToDisplay = 8;
-      } else if (confidenceThreshold >= 25) {
-        zonesToDisplay = 10;
-      } else {
-        zonesToDisplay = 12;
-      }
-      
-      const sortedZones = Object.entries(weaknessZones)
-        .map(([zone, data]) => ({
-          zone,
-          weaknessScore: Math.round(data.weaknessScore * 10) / 10,
-          sampleSize: data.sampleSize,
-          badOutcomes: data.badOutcomes,
-          confidence: data.confidence,
-          whiffs: data.whiffs,
-          weakContact: data.weakContact
-        }))
-        .sort((a, b) => b.weaknessScore - a.weaknessScore)
-        .slice(0, zonesToDisplay);
-      
-      res.json({
-        success: true,
-        zones: sortedZones,
-        metadata: {
-          threshold: confidenceThreshold,
-          zonesDisplayed: zonesToDisplay,
-          totalZonesAnalyzed: Object.keys(weaknessZones).length,
-          batter: selectedBatter,
-          team: selectedTeam
-        }
-      });
-      
-    } catch (error) {
-      console.error('Error calculating weakness zones:', error);
-      res.status(500).json({ 
-        error: 'calculation_error',
-        message: error.message 
-      });
-    }
-  });
+  app.post(`${BASE_PATH}/api/weakness-zones`, weaknessZonesHandler);
 }
 
-// helper function to calculate weakness zones
+/**
+ * Scores each strike zone for a batter based on bad outcomes (whiffs + weak contact).
+ * Only zones that meet the minimum sample size for the given confidence threshold are included.
+ * @param {Object} batter - A single batter object from transformPitchDataToTeams output.
+ * @param {number} confidenceThreshold - Slider value (0–100) controlling minimum sample size.
+ * @returns {Object} Map of zone keys to { weaknessScore, sampleSize, badOutcomes, confidence, whiffs, weakContact }.
+ */
 function calculateWeaknessZones(batter, confidenceThreshold) {
   const weaknessZones = {};
   
@@ -896,6 +837,12 @@ function calculateWeaknessZones(batter, confidenceThreshold) {
   return weaknessZones;
 }
 
+/**
+ * Maps a confidence threshold slider value to the minimum pitch sample size required.
+ * Higher thresholds demand larger samples to reduce noise.
+ * @param {number} confidenceThreshold - Value between 0 and 100.
+ * @returns {number} Minimum number of pitches required for a zone to be included.
+ */
 function calculateMinPitches(confidenceThreshold) {
   if (confidenceThreshold >= 90) return 15;
   if (confidenceThreshold >= 75) return 10;
@@ -904,6 +851,12 @@ function calculateMinPitches(confidenceThreshold) {
   return 3;
 }
 
+/**
+ * Returns a human-readable confidence label based on pitch count and bad outcome count.
+ * @param {number} pitches - Total pitches thrown to this zone.
+ * @param {number} badOutcomes - Count of whiffs + weak contact in this zone.
+ * @returns {'High'|'Medium'|'Low'|'Very Low'} Confidence rating string.
+ */
 function calculateZoneConfidence(pitches, badOutcomes) {
   if (pitches >= 15 && badOutcomes >= 5) return 'High';
   if (pitches >= 10 && badOutcomes >= 3) return 'Medium';
@@ -911,10 +864,18 @@ function calculateZoneConfidence(pitches, badOutcomes) {
   return 'Very Low';
 }
 
-// ----- End Confidence Threshold Slider Endpoint -----
-
-
-// ---- PDF report  ----- //
+/**
+ * GET /api/generate-report
+ * Assembles a full scouting report for a given date range and optional filters.
+ * Optionally narrows output to a single team/batter and appends weakness zone analysis.
+ * @query {string} startDate - Start of date range (YYYY-MM-DD or YYYYMMDD).
+ * @query {string} endDate - End of date range (YYYY-MM-DD or YYYYMMDD).
+ * @query {number} [maxVelocity] - Upper velocity cap in mph.
+ * @query {number} [confidenceThreshold] - Weakness zone confidence threshold (0–100).
+ * @query {string} [selectedTeam] - Team name to narrow output.
+ * @query {string} [selectedBatter] - Batter name to include detailed zone breakdown.
+ * @returns {Object} { success, reportData: { metadata, summary, teamsData, batterDetail } }
+ */
 app.get('/api/generate-report', async (req, res) => {
   try {
     const { startDate, endDate, maxVelocity, confidenceThreshold, selectedTeam, selectedBatter } = req.query;
@@ -969,7 +930,12 @@ app.get('/api/generate-report', async (req, res) => {
   }
 });
 
-// helper function to format dates for API
+/**
+ * Normalizes a date string to ISO format (YYYY-MM-DD).
+ * Accepts either YYYY-MM-DD (passed through) or compact YYYYMMDD (converted).
+ * @param {string|null} dateStr - Input date string.
+ * @returns {string|null} ISO-formatted date string, or null if input is falsy.
+ */
 function formatDateForApi(dateStr) {
   if (!dateStr) return null;
   if (dateStr.includes('-')) return dateStr;
@@ -979,7 +945,6 @@ function formatDateForApi(dateStr) {
   return dateStr;
 }
 
-// --- end -- Angela (2/25) ---- 
 
 
 // API health handler

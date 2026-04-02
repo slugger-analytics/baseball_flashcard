@@ -15,36 +15,57 @@ const DEFAULT_SETTINGS = {
 };
 let CURRENT_SETTINGS = { ...DEFAULT_SETTINGS };
 
-// Helper function to compute default season dates dynamically
+// Known ALPB season boundaries
+const SEASON_2025 = { start: '2025-04-25', end: '2025-09-18' };
+const SEASON_2026 = { start: '2026-04-21', end: '2026-10-15' };
+
+/**
+ * Computes the default date range for the UI date picker inputs.
+ * The start date is always the 2026 season opener (April 21, 2026).
+ * - Before the 2026 season: end = season start (placeholder; no data yet).
+ * - During the 2026 season: end = today's date (grows dynamically).
+ * - After the 2026 season: end = season close.
+ * @returns {{ start: string, end: string }} ISO date strings (YYYY-MM-DD).
+ */
 function getDefaultSeasonDates() {
-  const today = new Date();
-  const currentYear = today.getFullYear();
-  const currentMonth = today.getMonth(); // 0-11
-  const currentDay = today.getDate();
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const start = SEASON_2026.start;
 
-  // Season hasn't started yet if we're before April 15
-  const seasonHasStarted = currentMonth > 3 || (currentMonth === 3 && currentDay >= 15);
-
-  let seasonStart, seasonEnd;
-
-  if (!seasonHasStarted) {
-    // Jan 1 – Apr 14: current season hasn't started yet, show last year's full season
-    seasonStart = `${currentYear - 1}-04-15`;
-    seasonEnd   = `${currentYear - 1}-10-15`;
-  } else if (currentMonth <= 9) {
-    // Apr 15 – Oct 31: in-season, show season start through today
-    seasonStart = `${currentYear}-04-15`;
-    const monthStr = String(currentMonth + 1).padStart(2, '0');
-    const dayStr   = String(currentDay).padStart(2, '0');
-    seasonEnd = `${currentYear}-${monthStr}-${dayStr}`;
-  } else {
-    // Nov – Dec: off-season, show the completed current year's season
-    seasonStart = `${currentYear}-04-15`;
-    seasonEnd   = `${currentYear}-10-15`;
+  if (todayStr < SEASON_2026.start) {
+    // Pre-season: both dates sit at the upcoming season open
+    return { start, end: SEASON_2026.start };
   }
-
-  return { start: seasonStart, end: seasonEnd };
+  if (todayStr <= SEASON_2026.end) {
+    // In-season: end grows with today
+    return { start, end: todayStr };
+  }
+  // Post-season: full 2026 season
+  return { start, end: SEASON_2026.end };
 }
+
+/**
+ * Returns the date range and year label for the "Load Full Season" button.
+ * Pre-season loads the last completed season (2025); in/post-season loads 2026.
+ * @returns {{ start: string, end: string, year: number }}
+ */
+function getFullSeasonRange() {
+  const todayStr = new Date().toISOString().slice(0, 10);
+  if (todayStr < SEASON_2026.start) {
+    return { start: SEASON_2025.start, end: SEASON_2025.end, year: 2025 };
+  }
+  if (todayStr <= SEASON_2026.end) {
+    return { start: SEASON_2026.start, end: todayStr, year: 2026 };
+  }
+  return { start: SEASON_2026.start, end: SEASON_2026.end, year: 2026 };
+}
+/**
+ * JSX-like helper that creates a DOM element with props and children.
+ * Handles className, style objects, event listeners (onXxx), boolean attributes, and text nodes.
+ * @param {string} tag - HTML tag name (e.g. 'div', 'button').
+ * @param {Object} [props={}] - Attributes, event handlers, and style overrides.
+ * @param {...(Node|string|number|null)} children - Child nodes or text content (flattened).
+ * @returns {HTMLElement}
+ */
 function createElement(tag, props = {}, ...children) {
   const el = document.createElement(tag);
   Object.entries(props).forEach(([key, value]) => {
@@ -71,6 +92,14 @@ function createElement(tag, props = {}, ...children) {
   });
   return el;
 }
+/**
+ * Renders the strike zone SVG as a DOM element, placing pitch circles for each zone.
+ * Filters zones by handedness and an optional allowedZones whitelist from the weakness slider.
+ * @param {Array<Object>} zones - Array of pitchZone objects ({ position, pitch, good, zone }).
+ * @param {string} handedness - 'LHB' or 'RHB' — controls left/right mirroring of the SVG.
+ * @param {Array<string>|null} [allowedZones=null] - Zone keys to show; null means show all.
+ * @returns {HTMLElement} A div containing the SVG pitch zone graphic.
+ */
 function createPitchZone(zones, handedness, allowedZones = null) {
   const safeZones = Array.isArray(zones) ? zones : [];
   // Apply pitch filtering based on settings
@@ -137,6 +166,13 @@ function createPitchZone(zones, handedness, allowedZones = null) {
     pitchZone
   );
 }
+/**
+ * Builds the batter header block showing handedness badge, name, and total pitch count.
+ * @param {string} handedness - 'LHB' or 'RHB'.
+ * @param {string} batterName - Display name of the batter.
+ * @param {Array} pitchZones - Raw pitch zone array used only to compute total pitch count.
+ * @returns {HTMLElement}
+ */
 function createBatterGraphic(handedness, batterName, pitchZones) {
   const isLeftHanded = handedness === 'LHB';
   const totalPitches = Array.isArray(pitchZones) ? pitchZones.length : 0;
@@ -151,6 +187,15 @@ function createBatterGraphic(handedness, batterName, pitchZones) {
   );
 }
 
+/**
+ * Builds the scouting tendencies panel showing spray chart, zone analysis, and power sequence.
+ * Strips raw percentage strings from display text for cleaner presentation.
+ * @param {Object} tendencies - Batter tendency strings (pull%, oppo%, groundball%, etc.).
+ * @param {Object} stats - Aggregate stat counters (K%, BB%, xBA, etc.).
+ * @param {Object} zoneAnalysis - Per-zone pitch outcome breakdown.
+ * @param {string} powerSequence - Narrative text describing the top pitch sequence vs. this batter.
+ * @returns {HTMLElement}
+ */
 function createTendencies(tendencies, stats, zoneAnalysis, powerSequence) {
 const stripPercents = (text) => {
     if (typeof text !== 'string') return text;
@@ -365,6 +410,9 @@ class FlashcardApp {
     this.selectedBatterIndex = 0;
     this.showInfoPanel = false;
     this.showSettingsPanel = false;
+    const defaults = getDefaultSeasonDates();
+    this.lastStartDate = defaults.start;
+    this.lastEndDate = defaults.end;
     this.ensurePrintContainers();
     this.render();
   }
@@ -454,7 +502,18 @@ class FlashcardApp {
     CURRENT_SETTINGS = { ...DEFAULT_SETTINGS };
     this.render();
   }
-async loadDataRange(startDate, endDate, maxVelocity = 105, customLoadingMessage = null, pitchGroup = 'All') {
+/**
+   * Fetches processed pitch data for the given date range from GET /api/teams/range.
+   * Transitions the app through loading → teamSelect on success, or shows contextual error messages
+   * for future dates, empty results, or velocity-filtered empty results.
+   * @param {string} startDate - ISO date string (YYYY-MM-DD).
+   * @param {string} endDate - ISO date string (YYYY-MM-DD).
+   * @param {number} [maxVelocity=105] - Upper velocity cap in mph.
+   * @param {string|null} [customLoadingMessage=null] - Override for the loading screen message.
+   * @param {string} [pitchGroup='All'] - Pitch type filter: 'All', 'Fastballs', 'Breaking', or 'Offspeed'.
+   * @returns {Promise<void>}
+   */
+  async loadDataRange(startDate, endDate, maxVelocity = 105, customLoadingMessage = null, pitchGroup = 'All') {
 try {
       this.currentScreen = 'loading';
 
@@ -511,8 +570,12 @@ try {
     }
   }
 
-  // Add this helper function right below loadDataRange to handle the math for the Smart Buttons
-fetchSmartData(days) {
+  /**
+   * Resolves a smart date range from a day-count shortcut or the full season default,
+   * then delegates to loadDataRange. Reads maxVelocity and pitchGroup from the DOM.
+   * @param {number|null} days - Number of trailing days to load (7 or 30), or null for full season.
+   */
+  fetchSmartData(days) {
       const maxVel = document.getElementById('maxVelocity').value;
       const pitchGroup = document.getElementById('pitchGroup').value;
       let startStr = '';
@@ -534,15 +597,10 @@ fetchSmartData(days) {
           endStr = formatDate(end);
           customMsg = `Loading the last ${days} days...`;
       } else {
-          const today = new Date();
-          const currentYear = today.getFullYear();
-          const currentMonth = today.getMonth(); // 0-11
-          const currentDay = today.getDate();
-          const seasonComplete = currentMonth > 9 || (currentMonth === 9 && currentDay > 15);
-          const lastYear = seasonComplete ? currentYear : currentYear - 1;
-          startStr = `${lastYear}-04-15`;
-          endStr   = `${lastYear}-10-15`;
-          customMsg = `Loading the ${lastYear} Full Season...`;
+          const season = getFullSeasonRange();
+          startStr  = season.start;
+          endStr    = season.end;
+          customMsg = `Loading ${season.year} Full Season...`;
       }
 
       // retain the dates in the calendar memory
