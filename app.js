@@ -17,7 +17,7 @@ let CURRENT_SETTINGS = { ...DEFAULT_SETTINGS };
 
 // Known ALPB season boundaries
 const SEASON_2025 = { start: '2025-04-25', end: '2025-09-18' };
-const SEASON_2026 = { start: '2026-04-21', end: '2026-10-15' };
+const SEASON_2026 = { start: '2026-04-21', end: '2026-09-13' };
 
 /**
  * Computes the default date range for the UI date picker inputs.
@@ -290,7 +290,9 @@ const stripPercents = (text) => {
   // let firstPitchText = stripPercents(tendencies?.firstStrike || `Swings ${firstPitchSwingRate} on first pitch`);
   let firstPitchText = tendencies?.firstStrike || `Swings ${firstPitchSwingRate} on first pitch`;
   let sprayText = tendencies?.spray || 'All fields';
-  const cleanedPowerSequence = stripPercents(powerSequence || 'Insufficient data');
+  const cleanedPowerSequence = stripPercents(
+  (powerSequence && powerSequence !== 'Calculating...') ? powerSequence : 'Insufficient data'
+);
 
   // The UI Slider (Aaron part)
 
@@ -302,11 +304,14 @@ const stripPercents = (text) => {
     { label: 'Strict',    desc: 'Critical Only',     threshold: 20, color: '#22c55e' },
   ];
 
+const activeLevel = CONFIDENCE_LEVELS.find(l => l.threshold === vulnThreshold) || CONFIDENCE_LEVELS[1];
+  const activeColor = activeLevel.color;
+
 const confidenceSlider = app ? createElement('div', { style: { padding: '16px', background: 'white', borderRadius: '12px', border: '1px solid var(--border)', marginBottom: '16px', boxShadow: 'var(--shadow-sm)' } },
     createElement('div', { style: { marginBottom: '10px', textAlign: 'center' } },
       createElement('div', { style: { display: 'inline-flex', alignItems: 'center', gap: '7px', background: '#f1f5f9', border: '1px solid #e2e8f0', borderRadius: '99px', padding: '5px 14px' } },
-        createElement('span', { style: { width: '12px', height: '12px', borderRadius: '50%', border: '2.5px solid #64748b', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: '0' } },
-          createElement('span', { style: { width: '3px', height: '3px', borderRadius: '50%', background: '#64748b', display: 'block' } })
+        createElement('span', { style: { width: '12px', height: '12px', borderRadius: '50%', border: `2.5px solid ${activeColor}`, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: '0' } },
+          createElement('span', { style: { width: '3px', height: '3px', borderRadius: '50%', background: activeColor, display: 'block' } })
         ),
         createElement('span', { style: { fontSize: '11px', fontWeight: '700', color: '#475569', letterSpacing: '0.09em', textTransform: 'uppercase' } }, 'Weakness Confidence')
       )

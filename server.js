@@ -551,12 +551,13 @@ function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 9
           });
 
           const topPitch = Object.entries(finalPitches).sort((a, b) => b[1] - a[1])[0];
+          if (!topPitch) return 'Insufficient data';
           return `${topPitch[0]} gets outs (${topPitch[1]}/${total})`;
         }
 
-        if (batter.outSequences.length > 0) {
-          batter.powerSequence = analyzeOutSequences(batter.outSequences);
-        }
+        batter.powerSequence = batter.outSequences.length > 0
+          ? analyzeOutSequences(batter.outSequences)
+          : 'Insufficient data';
       }
     });
   });
@@ -621,8 +622,8 @@ const teamsRangeHandler = async (req, res) => {
       const todayStr = new Date().toISOString().slice(0, 10);
       const start = '2026-04-21';
       if (todayStr < start) return { start, end: start };
-      if (todayStr <= '2026-10-15') return { start, end: todayStr };
-      return { start, end: '2026-10-15' };
+      if (todayStr <= '2026-09-13') return { start, end: todayStr };
+      return { start, end: '2026-09-13' };
     };
 
     const parsedStart = parseDateInput(startDate);
@@ -671,7 +672,6 @@ const teamsRangeHandler = async (req, res) => {
         if (pitchGroup === 'Offspeed')  return offspeed.includes(pt);
         return true;
       });
-      console.log(`🎯 Filtered down to ${pitches.length} ${pitchGroup} pitches`);
     }
 
     // parse maxVelocity
