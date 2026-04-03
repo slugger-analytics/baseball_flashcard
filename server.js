@@ -128,6 +128,18 @@ async function populateLookupCaches() {
   }
 }
 
+// Add this endpoint to check cache status
+app.get('/api/cache-status', (req, res) => {
+  res.json({
+    players: lookupCache.players.size,
+    teams: lookupCache.teams.size,
+    ballparks: lookupCache.ballparks.size,
+    samplePlayer: Array.from(lookupCache.players.keys())[0] || null,
+    apiKeyConfigured: !!process.env.SLUGGER_API_KEY,
+    apiKeyPrefix: process.env.SLUGGER_API_KEY ? process.env.SLUGGER_API_KEY.substring(0, 10) + '...' : 'missing'
+  });
+});
+
 /**
  * Resolves a player ID to a display name using the in-memory cache.
  * @param {string} id - SLUGGER player UUID.
@@ -990,10 +1002,17 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 8080;
 
 async function startServer() {
-  await populateLookupCaches();
+  // await populateLookupCaches();
   app.listen(PORT, () => {
     console.log(`✅ Server running on http://localhost:${PORT}/\n`);
   });
+}
+
+if (process.env.VERCEL) {
+  setTimeout(() => {
+    console.log('Background cache population started...');
+    populateLookupCaches().catch(console.error);
+  }, 1000);
 }
 
 module.exports = app;
