@@ -466,7 +466,8 @@ function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 9
 
       batterData.pitchZones.push({
         position: [Math.max(0, Math.min(100, xPos)), Math.max(0, Math.min(100, yPos))],
-        pitch: pitchType, good: isGoodPitch, zone: zone
+        pitch: pitchType, good: isGoodPitch, zone: zone,
+        pitcherThrows: pitch.pitcher_throws === 'Left' ? 'L' : 'R'
       });
     }
   });
@@ -763,23 +764,18 @@ const weaknessZonesHandler = async (req, res) => {
 
     const weaknessZones = calculateWeaknessZones(batter, confidenceThreshold);
 
-    let zonesToDisplay;
-    if (confidenceThreshold >= 75)      zonesToDisplay = 4;
-    else if (confidenceThreshold >= 50) zonesToDisplay = 8;
-    else if (confidenceThreshold >= 25) zonesToDisplay = 10;
-    else                                zonesToDisplay = 12;
+    const zonesToDisplay = confidenceThreshold >= 75 ? 4 : confidenceThreshold >= 50 ? 8 : undefined;
 
     const sortedZones = Object.entries(weaknessZones)
       .map(([zone, data]) => ({
         zone,
-        weaknessScore: Math.round(data.weaknessScore * 10) / 10,
+        vulnerabilityScore: Math.round(data.vulnerabilityScore * 10) / 10,
         sampleSize: data.sampleSize,
-        badOutcomes: data.badOutcomes,
-        confidence: data.confidence,
+        severity: data.severity,
         whiffs: data.whiffs,
         weakContact: data.weakContact
       }))
-      .sort((a, b) => b.weaknessScore - a.weaknessScore)
+      .sort((a, b) => a.vulnerabilityScore - b.vulnerabilityScore)
       .slice(0, zonesToDisplay);
 
     res.json({
@@ -787,7 +783,7 @@ const weaknessZonesHandler = async (req, res) => {
       zones: sortedZones,
       metadata: {
         threshold: confidenceThreshold,
-        zonesDisplayed: zonesToDisplay,
+        zonesDisplayed: zonesToDisplay ?? 'all',
         totalZonesAnalyzed: Object.keys(weaknessZones).length,
         batter: selectedBatter,
         team: selectedTeam
@@ -806,70 +802,88 @@ if (BASE_PATH) {
 }
 
 /**
- * Scores each strike zone for a batter based on bad outcomes (whiffs + weak contact).
- * Only zones that meet the minimum sample size for the given confidence threshold are included.
+ * Scores each strike zone for a batter using the three-metric rank-based vulnerability formula.
+ * Zones are ranked by Whiff Rate (45%), Weak Contact Rate (35%), and Chase/Foul Rate (20%).
+ * A rank of 0 = worst (most vulnerable); the weighted sum produces a Vulnerability Score (0–100).
+ * Only zones meeting the mode-specific minimum pitch count are included, and results are
+ * filtered to the severity tier(s) allowed by the active confidence mode.
  * @param {Object} batter - A single batter object from transformPitchDataToTeams output.
- * @param {number} confidenceThreshold - Slider value (0–100) controlling minimum sample size.
- * @returns {Object} Map of zone keys to { weaknessScore, sampleSize, badOutcomes, confidence, whiffs, weakContact }.
+ * @param {number} confidenceThreshold - Slider value (0–100): 75–100 = Strict, 50–74 = Balanced, 0–49 = Broad.
+ * @returns {Object} Map of zone keys to { vulnerabilityScore, sampleSize, severity, whiffs, weakContact }.
  */
 function calculateWeaknessZones(batter, confidenceThreshold) {
-  const weaknessZones = {};
-  
-  // get all pitch zones from batter's data
   const zoneStats = batter.zoneAnalysis || {};
-  
-  // min. pitches required based on confidence threshold
+
+  // Mode-specific parameters
   const minPitchesRequired = calculateMinPitches(confidenceThreshold);
-  
+  const maxScore = confidenceThreshold >= 75 ? 20 : confidenceThreshold >= 50 ? 35 : 60;
+
+  // Step 1: compute raw percentages for zones that meet the minimum pitch count
+  const zoneScores = {};
   Object.entries(zoneStats).forEach(([zone, stats]) => {
-    if (stats.pitches >= minPitchesRequired) {
-      // calculate weakness score based on bad outcomes
-      // bad outcomes = whiffs + weak contact
-      const badOutcomes = (stats.whiffs || 0) + (stats.weakContact || 0);
-      const weaknessScore = (badOutcomes / stats.pitches) * 100;
-      
-      // calculate confidence level
-      const confidence = calculateZoneConfidence(stats.pitches, badOutcomes);
-      
-      weaknessZones[zone] = {
-        weaknessScore,
-        sampleSize: stats.pitches,
-        badOutcomes,
-        confidence,
-        whiffs: stats.whiffs || 0,
-        weakContact: stats.weakContact || 0
-      };
-    }
+    if ((stats.pitches || 0) < minPitchesRequired) return;
+    if ((stats.swings || 0) === 0) return;
+    const whiff_percent       = (stats.whiffs      || 0) / stats.swings * 100;
+    const chase_percent       = (stats.fouls       || 0) / stats.swings * 100;
+    const weakContact_percent = stats.contact > 0 ? (stats.weakContact || 0) / stats.contact * 100 : 0;
+    zoneScores[zone] = { whiff_percent, chase_percent, weakContact_percent, stats };
   });
-  
+
+  const zones = Object.keys(zoneScores);
+  if (zones.length === 0) return {};
+
+  // Step 2: rank each metric across zones (rank 0 = highest rate = most vulnerable)
+  const getRank = (metric) => {
+    const values = zones.map(z => zoneScores[z][metric]);
+    const sorted = [...values].sort((a, b) => b - a);
+    const ranks = {};
+    zones.forEach(z => {
+      const idx = sorted.findIndex(v => Math.abs(v - zoneScores[z][metric]) < 0.0001);
+      ranks[z] = zones.length === 1 ? 0 : ((idx === -1 ? 0 : idx) / (zones.length - 1)) * 100;
+    });
+    return ranks;
+  };
+
+  const whiffRanks       = getRank('whiff_percent');
+  const weakContactRanks = getRank('weakContact_percent');
+  const chaseRanks       = getRank('chase_percent');
+
+  // Step 3: compute weighted vulnerability score and filter by mode's severity ceiling
+  const weaknessZones = {};
+  zones.forEach(zone => {
+    const vulnerabilityScore = (
+      whiffRanks[zone]       * 0.45 +
+      weakContactRanks[zone] * 0.35 +
+      chaseRanks[zone]       * 0.20
+    );
+    if (vulnerabilityScore > maxScore) return;
+
+    const severity = vulnerabilityScore <= 20 ? 'CRITICAL'
+                   : vulnerabilityScore <= 35 ? 'MAJOR'
+                   :                            'MODERATE';
+
+    weaknessZones[zone] = {
+      vulnerabilityScore,
+      sampleSize:  zoneScores[zone].stats.pitches,
+      severity,
+      whiffs:      zoneScores[zone].stats.whiffs      || 0,
+      weakContact: zoneScores[zone].stats.weakContact || 0,
+    };
+  });
+
   return weaknessZones;
 }
 
 /**
  * Maps a confidence threshold slider value to the minimum pitch sample size required.
- * Higher thresholds demand larger samples to reduce noise.
+ * Strict (75–100): 10+ pitches. Balanced (50–74): 7+ pitches. Broad (0–49): 3+ pitches.
  * @param {number} confidenceThreshold - Value between 0 and 100.
  * @returns {number} Minimum number of pitches required for a zone to be included.
  */
 function calculateMinPitches(confidenceThreshold) {
-  if (confidenceThreshold >= 90) return 15;
   if (confidenceThreshold >= 75) return 10;
   if (confidenceThreshold >= 50) return 7;
-  if (confidenceThreshold >= 25) return 5;
   return 3;
-}
-
-/**
- * Returns a human-readable confidence label based on pitch count and bad outcome count.
- * @param {number} pitches - Total pitches thrown to this zone.
- * @param {number} badOutcomes - Count of whiffs + weak contact in this zone.
- * @returns {'High'|'Medium'|'Low'|'Very Low'} Confidence rating string.
- */
-function calculateZoneConfidence(pitches, badOutcomes) {
-  if (pitches >= 15 && badOutcomes >= 5) return 'High';
-  if (pitches >= 10 && badOutcomes >= 3) return 'Medium';
-  if (pitches >= 5) return 'Low';
-  return 'Very Low';
 }
 
 /**

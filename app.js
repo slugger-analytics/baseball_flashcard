@@ -108,8 +108,8 @@ function createPitchZone(zones, handedness, allowedZones = null) {
   // if the weakness slider has restricted zones, only show those
   if (allowedZones !== null) {
     if (allowedZones.length > 0) {
-      // Filter to only circles in vulnerable zones
-      filteredZones = filteredZones.filter(z => allowedZones.includes(z.zone));
+      // Show circles in vulnerable zones; always keep red strength/hot-zone circles (z.good === false)
+      filteredZones = filteredZones.filter(z => z.good === false || allowedZones.includes(z.zone));
     } else {
       // No vulnerable zones identified — at strict/balanced, show only good pitches
       // At broad (threshold = 60), show everything
@@ -141,11 +141,16 @@ function createPitchZone(zones, handedness, allowedZones = null) {
     const pitchType = zone.pitch || 'F';
     const isGood = zone.good === true;
     const colorClass = isGood ? 'pitch-circle--good' : 'pitch-circle--bad';
+    const pitcherHand = zone.pitcherThrows || '';
+    const handClass = pitcherHand === 'L' ? 'pitch-circle__hand--left' : 'pitch-circle__hand--right';
     return createElement('div', {
       className: `pitch-circle ${colorClass}`,
       style: { left: `${x}%`, top: `${y}%` },
-      title: `${pitchType} — ${isGood ? 'Attack here' : 'Avoid this location'}`
-    }, pitchType);
+      title: `${pitchType} (${pitcherHand}HP) — ${isGood ? 'Attack here' : 'Avoid this location'}`
+    },
+      createElement('span', { className: 'pitch-circle__type' }, pitchType),
+      createElement('span', { className: `pitch-circle__hand ${handClass}` }, pitcherHand)
+    );
   });
   const isLeftHanded = handedness === 'LHB';
   const batterClass = isLeftHanded ? 'batter-graphic-left-handed' : 'batter-graphic-right-handed';
@@ -218,10 +223,11 @@ const stripPercents = (text) => {
   const hotZones = [];
   if (zoneAnalysis) {
     const zoneScores = {};
+    const minPitches = vulnThreshold <= 20 ? 10 : vulnThreshold <= 35 ? 7 : 3;
 
     Object.entries(zoneAnalysis).forEach(([zone, stats]) => {
 
-      if (stats.swings < CURRENT_SETTINGS.vulnerableZoneMinSwings) return;
+      if ((stats.pitches || 0) < minPitches) return;
 
       const whiff_percent = (stats.whiffs / stats.swings) * 100;
       const chase_percent = (stats.fouls / stats.swings) * 100;
@@ -278,13 +284,15 @@ const stripPercents = (text) => {
     }
   }
   
-  vulnerableZones.sort((a, b) => b.score - a.score);
+  vulnerableZones.sort((a, b) => a.score - b.score);
   hotZones.sort((a, b) => b.hardHitPct - a.hardHitPct);
 
   const filteredVulnerableZones = vulnerableZones.filter(z => z.score <= vulnThreshold);
+  const zoneCap = vulnThreshold <= 20 ? 4 : vulnThreshold <= 35 ? 8 : undefined;
+  const cappedVulnerableZones = zoneCap !== undefined ? filteredVulnerableZones.slice(0, zoneCap) : filteredVulnerableZones;
 
   if (app) {
-    app.allowedZones = filteredVulnerableZones.map(z => z.zone);
+    app.allowedZones = cappedVulnerableZones.map(z => z.zone);
   }
   
   // let firstPitchText = stripPercents(tendencies?.firstStrike || `Swings ${firstPitchSwingRate} on first pitch`);
@@ -375,10 +383,10 @@ const confidenceSlider = app ? createElement('div', { style: { padding: '16px', 
       createElement('h4', {}, 'First-Pitch Approach'),
       createElement('div', { className: 'power-sequence-text' }, firstPitchText)
     ),
-    filteredVulnerableZones.length > 0 ? createElement('div', { className: 'power-sequence vulnerable-zone' },
+    cappedVulnerableZones.length > 0 ? createElement('div', { className: 'power-sequence vulnerable-zone' },
     createElement('h4', {}, 'Vulnerable Zones'),
     createElement('div', { className: 'power-sequence-text' },
-    filteredVulnerableZones.slice(0, 2).map(z => `${z.zone} (${z.score})`).join(', '))
+    cappedVulnerableZones.slice(0, 2).map(z => `${z.zone} (${z.score})`).join(', '))
 ) : null,
     hotZones.length > 0 ? createElement('div', { className: 'power-sequence hot-zone' },
       createElement('h4', {}, 'Hot Zones (Avoid)'),
@@ -1102,7 +1110,7 @@ createElement('div', {},
               createElement('div', { className: 'info-entry__content' },
                 createElement('div', { className: 'info-entry__title' }, 'Strike Zone'),
                 createElement('div', { className: 'info-entry__desc' },
-                  'Green circles = attack (whiffs, weak contact). Red circles = avoid (hard contact, balls in play). The batter icon shows their batting stance.'
+                  'Green circles = attack (whiffs, weak contact). Red circles = avoid (hard contact, balls in play). The batter icon shows their batting stance. The small L or R indicates if the pitch was thrown by a Left-Handed or Right-Handed pitcher.'
                 ),
                 createElement('div', { className: 'pitch-badge-row' },
                   ...[
