@@ -154,7 +154,7 @@ function createPitchZone(zones, handedness, allowedZones = null) {
   });
   const isLeftHanded = handedness === 'LHB';
   const batterClass = isLeftHanded ? 'batter-graphic-left-handed' : 'batter-graphic-right-handed';
-  const svgPath = isLeftHanded ? './lhb.svg' : './rhb.svg';
+  const svgPath = isLeftHanded ? '/lhb.svg' : '/rhb.svg';
   const svgImg = createElement('img', {
     src: svgPath,
     alt: isLeftHanded ? 'Left-Handed Batter' : 'Right-Handed Batter',
