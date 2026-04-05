@@ -120,9 +120,9 @@ function createPitchZone(zones, handedness, allowedZones = null) {
     }
   }
 
-  if (CURRENT_SETTINGS.showOnlyGoodPitches) {
+  if (CURRENT_SETTINGS.showOnlyGoodPitches && !CURRENT_SETTINGS.showOnlyBadPitches) {
     filteredZones = filteredZones.filter(z => z.good === true);
-  } else if (CURRENT_SETTINGS.showOnlyBadPitches) {
+  } else if (CURRENT_SETTINGS.showOnlyBadPitches && !CURRENT_SETTINGS.showOnlyGoodPitches) {
     filteredZones = filteredZones.filter(z => z.good === false);
   }
   // Apply max pitches limit
@@ -223,7 +223,7 @@ const stripPercents = (text) => {
   const hotZones = [];
   if (zoneAnalysis) {
     const zoneScores = {};
-    const minPitches = vulnThreshold <= 20 ? 10 : vulnThreshold <= 35 ? 7 : 3;
+    const minPitches = CURRENT_SETTINGS.vulnerableZoneMinSwings;
 
     Object.entries(zoneAnalysis).forEach(([zone, stats]) => {
 
