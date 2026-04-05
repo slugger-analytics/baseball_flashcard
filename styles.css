@@ -157,6 +157,15 @@ html, body {
   color: #1947ac;
 }
 
+.info-bubble {
+  background: #2f66af;
+  color: #ffffff;
+  padding: 4px 14px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
 .stat-label {
   font-size: 12px;
   font-weight: 600;
@@ -319,6 +328,14 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
   box-shadow: var(--shadow-md);
 }
 
+.lineup-header .back-btn:hover {
+  transform: translateY(calc(-50% - 2px));
+}
+
+.lineup-header .print-btn:hover {
+  transform: translateY(calc(-50% - 2px));
+}
+
 .lineup-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
@@ -374,7 +391,7 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
   font-weight: 700;
   color: var(--accent);
   padding: 4px 12px;
-  background: #eff6ff;
+  background: #e6f0fd;
   border-radius: 12px;
 }
 

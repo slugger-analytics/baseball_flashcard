@@ -938,8 +938,12 @@ createElement('div', {},
     return createElement('div', { className: 'team-select-screen' },
       createElement('div', { className: 'team-select-header' },
         createElement('h1', {}, 'Select a Team'),
-        createElement('p', {}, `${teams.length} teams available • Date range: ${METADATA?.startDate || 'N/A'} to ${METADATA?.endDate || 'N/A'}`),
-        createElement('button', { className: 'back-btn', onclick: () => this.showDateSelect() }, '← Change Dates')
+        createElement('div', { style: { display: 'flex', gap: '10px', justifyContent: 'center', marginBottom: '20px' } },
+          createElement('span', { className: 'info-bubble' }, `${teams.length} teams`),
+          createElement('span', { style: { fontSize: '18px', lineHeight: '1', alignSelf: 'center' } }, '⚾'),
+          createElement('span', { className: 'info-bubble' }, `${METADATA?.startDate || 'N/A'} → ${METADATA?.endDate || 'N/A'}`)
+        ),
+        createElement('button', { className: 'back-btn', onclick: () => this.showDateSelect() }, '⮜ Change Dates')
       ),
       createElement('div', { className: 'team-grid' }, ...teamButtons)
     );
@@ -960,9 +964,9 @@ createElement('div', {},
     });
     return createElement('div', { className: 'lineup-screen' },
       createElement('div', { className: 'lineup-header' },
-        createElement('button', { className: 'back-btn', onclick: () => this.showTeamSelect() }, '← Teams'),
+        createElement('button', { className: 'back-btn', onclick: () => this.showTeamSelect() }, '⮜ Teams'),
         createElement('h1', {}, `${this.selectedTeam} Lineup`),
-        createElement('p', {}, `${lineup.length} batters`),
+        createElement('span', { className: 'info-bubble' }, `${lineup.length} batters`),
         createElement('button', { className: 'print-btn', onclick: () => this.printLineup() }, 'Print Lineup')
       ),
       createElement('div', { className: 'lineup-grid' }, ...cards)
@@ -1064,7 +1068,7 @@ createElement('div', {},
       createElement('div', { className: 'header' },
         createElement('div', { className: 'header__title' },
           createElement('span', { className: 'name' }, data.batter || 'Unknown'),
-          createElement('span', { className: 'meta' }, data.handedness || ''),
+          createElement('span', { className: `mini-card-hand ${data.handedness}` }, data.handedness || ''),
           createElement('span', { className: 'meta' }, `• ${data.stats?.totalPitches || 0} pitches`),
           createElement('button', {
             className: 'info-btn',
@@ -1076,20 +1080,20 @@ createElement('div', {},
           }, '⚙')
         ),
         createElement('div', { className: 'header__controls' },
-          createElement('span', { className: 'chip back-chip', onclick: () => this.showLineup(this.selectedTeam) }, '← Lineup'),
+          createElement('span', { className: 'chip back-chip', onclick: () => this.showLineup(this.selectedTeam) }, '⮜ Lineup'),
           createElement('span', { className: 'chip print-chip', onclick: () => this.printCurrentCard() }, 'Print'),
           createElement('span', {
             className: 'chip', onclick: () => {
               this.selectedBatterIndex = (this.selectedBatterIndex - 1 + lineup.length) % lineup.length;
               this.render();
             }
-          }, '◀ Prev'),
+          }, '⮜ Prev'),
           createElement('span', {
             className: 'chip', onclick: () => {
               this.selectedBatterIndex = (this.selectedBatterIndex + 1) % lineup.length;
               this.render();
             }
-          }, 'Next ▶')
+          }, 'Next ⮞')
         )
       ),
       this.showInfoPanel ? createElement('div', { className: 'info-overlay', onclick: () => this.toggleInfo() },
