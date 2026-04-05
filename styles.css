@@ -597,13 +597,21 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
 }
 
 .pitch-circle__hand--left {
-  color: #00d8ff;
-  text-shadow: 1px 1px 2px rgba(0,0,0,0.6);
+  color: #ffffff;
+  text-shadow:
+    -1px -1px 0 #00d8ff,  1px -1px 0 #00d8ff,
+    -1px  1px 0 #00d8ff,  1px  1px 0 #00d8ff,
+     0px -1px 0 #00d8ff,  0px  1px 0 #00d8ff,
+    -1px  0px 0 #00d8ff,  1px  0px 0 #00d8ff;
 }
 
 .pitch-circle__hand--right {
-  color: #ff2a7a;
-  text-shadow: 1px 1px 2px rgba(0,0,0,0.6);
+  color: #ffffff;
+  text-shadow:
+    -1px -1px 0 #ff2a7a,  1px -1px 0 #ff2a7a,
+    -1px  1px 0 #ff2a7a,  1px  1px 0 #ff2a7a,
+     0px -1px 0 #ff2a7a,  0px  1px 0 #ff2a7a,
+    -1px  0px 0 #ff2a7a,  1px  0px 0 #ff2a7a;
 }
 
 .pitch-circle--good {

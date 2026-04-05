@@ -1016,7 +1016,7 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 8080;
 
 async function startServer() {
-  // await populateLookupCaches();
+  await populateLookupCaches(); // previously commented out?
   app.listen(PORT, () => {
     console.log(`✅ Server running on http://localhost:${PORT}/\n`);
   });
