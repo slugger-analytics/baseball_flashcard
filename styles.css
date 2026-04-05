@@ -51,7 +51,8 @@ html, body {
   margin-bottom: 40px;
 }
 
-.team-select-screen h1 {
+.team-select-screen h1,
+.lineup-header h1 {
   font-size: 52px;
   font-weight: 800; /* Bolder, more modern weight */
   letter-spacing: -1px; /* Tighter letter spacing looks sleeker */
@@ -150,6 +151,10 @@ html, body {
   font-weight: 800;
   color: var(--accent);
   line-height: 1;
+}
+
+.stat-number.stat-pitches {
+  color: #1947ac;
 }
 
 .stat-label {
@@ -371,6 +376,11 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
   padding: 4px 12px;
   background: #eff6ff;
   border-radius: 12px;
+}
+
+.mini-card-hand.RHB {
+  background: #fee2e2;
+  color: #b91c1c;
 }
 
 .mini-card-pitches {

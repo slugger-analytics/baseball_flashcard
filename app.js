@@ -928,7 +928,7 @@ createElement('div', {},
             createElement('span', { className: 'stat-label' }, 'Players')
           ),
           createElement('div', { className: 'stat-item' },
-            createElement('span', { className: 'stat-number' }, totalPitches),
+            createElement('span', { className: 'stat-number stat-pitches' }, totalPitches),
             createElement('span', { className: 'stat-label' }, 'Pitches')
           )
         )
@@ -954,7 +954,7 @@ createElement('div', {},
       },
         createElement('div', { className: 'mini-card-order' }, `#${i + 1}`),
         createElement('div', { className: 'mini-card-name' }, batter.batter),
-        createElement('div', { className: 'mini-card-hand' }, batter.handedness),
+        createElement('div', { className: `mini-card-hand ${batter.handedness}` }, batter.handedness),
         createElement('div', { className: 'mini-card-pitches' }, `${batter.stats?.totalPitches || 0} pitches`)
       );
     });
