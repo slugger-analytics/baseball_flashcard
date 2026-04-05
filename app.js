@@ -869,7 +869,7 @@ createElement('div', {},
             }, 'Load Last 30 Days'),
             createElement('button', {
               // Deep Navy to match the "Filter Trackman Data" Title
-              className: 'team-btn', style: { padding: '8px 10px', fontSize: '13px', flex: 1, background: '#1e293b', border: 'none', boxShadow: 'none' },
+              className: 'team-btn', style: { padding: '8px 10px', fontSize: '13px', flex: 1, background: 'rgb(26, 71, 143)', border: 'none', boxShadow: 'none' },
               onclick: () => this.fetchSmartData(null)
             }, 'Load Last Full Season')
           )
