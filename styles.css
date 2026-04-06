@@ -75,6 +75,38 @@ html, body {
   animation-duration: 4s;
 }
 
+/* ── Loading ticker ── */
+.ticker-wrap {
+  overflow: hidden;
+  white-space: nowrap;
+  width: 100%;
+  margin-top: 8px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.ticker-text {
+  position: relative;
+  font-size: 1.1rem;
+  letter-spacing: 0.5px;
+  color: var(--muted);
+  animation: ticker-scroll 16s ease-in-out infinite;
+}
+
+.ticker-var--blue  { font-weight: 700; color: #2563eb; }
+.ticker-var--red   { font-weight: 700; color: #dc2626; }
+.ticker-var--green { font-weight: 700; color: #16a34a; }
+
+@keyframes ticker-scroll {
+  0%   { transform: translateX(0);     opacity: 1; }
+  15%  { transform: translateX(0);     opacity: 1; }
+  45%  { transform: translateX(120%);  opacity: 0; }
+  50%  { transform: translateX(-120%); opacity: 0; }
+  85%  { transform: translateX(0);     opacity: 1; }
+  100% { transform: translateX(0);     opacity: 1; }
+}
+
 .team-select-screen p {
   font-size: 18px;
   color: var(--muted);

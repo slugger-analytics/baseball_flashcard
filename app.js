@@ -110,8 +110,13 @@ function createPitchZone(zones, handedness, allowedZones = null) {
   // if the weakness slider has restricted zones, only show those
   if (allowedZones !== null) {
     if (allowedZones.length > 0) {
-      // Show circles in vulnerable zones; always keep red strength/hot-zone circles (z.good === false)
-      filteredZones = filteredZones.filter(z => z.good === false || allowedZones.includes(z.zone));
+      // Filter green circles to allowed vulnerable zones; filter red circles to allowed hot zones
+      const allowedBadZones = (typeof app !== 'undefined' && app?.allowedBadZones) ?? null;
+      filteredZones = filteredZones.filter(z => {
+        if (z.good === true)  return allowedZones.includes(z.zone);
+        if (z.good === false) return allowedBadZones === null || allowedBadZones.includes(z.zone);
+        return true;
+      });
     } else {
       // No vulnerable zones identified — at strict/balanced, show only good pitches
       // At broad (threshold = 60), show everything
@@ -293,8 +298,12 @@ const stripPercents = (text) => {
   const zoneCap = vulnThreshold <= 20 ? 4 : vulnThreshold <= 35 ? 8 : undefined;
   const cappedVulnerableZones = zoneCap !== undefined ? filteredVulnerableZones.slice(0, zoneCap) : filteredVulnerableZones;
 
+  const hotZoneCap = vulnThreshold <= 20 ? 2 : vulnThreshold <= 35 ? 4 : undefined;
+  const cappedHotZones = hotZoneCap !== undefined ? hotZones.slice(0, hotZoneCap) : hotZones;
+
   if (app) {
     app.allowedZones = cappedVulnerableZones.map(z => z.zone);
+    app.allowedBadZones = cappedHotZones.map(z => z.zone);
   }
   
   // let firstPitchText = stripPercents(tendencies?.firstStrike || `Swings ${firstPitchSwingRate} on first pitch`);
@@ -532,8 +541,7 @@ class FlashcardApp {
 try {
       this.currentScreen = 'loading';
 
-      const pitchLabel = { All: 'All Pitches', Fastballs: 'Fastballs', Breaking: 'Breaking', Offspeed: 'Offspeed' }[pitchGroup] || 'All Pitches';
-      const base = `Loading ${pitchLabel} (with Max Velocity of ${maxVelocity} MPH)`;
+      const pitchLabel = { All: 'All Pitches', Fastballs: 'Fastballs', Breaking: 'Breaking Balls', Offspeed: 'Offspeed' }[pitchGroup] || 'All Pitches';
       // --- CACHE CHECK ---
       const cacheCoversRange =
         cachedSeasonData !== null &&
@@ -551,9 +559,7 @@ try {
         return;
       }
 
-      this.loadingMessage = seasonYear
-        ? `${base} for the ${seasonYear} Full Season. This may take a few minutes...`
-        : `${base}...`;
+      this.loadingParams = { pitchGroup: pitchLabel, maxVelocity, seasonYear };
       this.render();
 
       const response = await fetch(
@@ -679,9 +685,24 @@ try {
       el.textContent = '.'.repeat(dotCount);
     }, 500);
 
+    const params = this.loadingParams || {};
+    const tickerChildren = [
+      'Loading data for ',
+      createElement('span', { className: 'ticker-var--blue' }, params.pitchGroup || 'All Pitches'),
+      ' with max velocity ',
+      createElement('span', { className: 'ticker-var--red' }, (params.maxVelocity || '105') + ' MPH'),
+    ];
+    if (params.seasonYear) {
+      tickerChildren.push(' for the ');
+      tickerChildren.push(createElement('span', { className: 'ticker-var--green' }, params.seasonYear + ' Full Season'));
+    }
+    tickerChildren.push(' (this may take up to a few minutes...)');
+
     return createElement('div', { className: 'team-select-screen loading-screen' },
       createElement('h1', {}, 'Loading', dotsSpan),
-      createElement('p', {}, this.loadingMessage)
+      createElement('div', { className: 'ticker-wrap' },
+        createElement('span', { className: 'ticker-text' }, ...tickerChildren)
+      )
     );
   }
   renderError() {
@@ -997,7 +1018,7 @@ createElement('div', {},
       createElement('div', { className: 'lineup-grid' }, ...cards)
     );
   }
-  renderSettingsPanel() {
+  renderSettingsPanel(maxPitches = 50) {
     const createSlider = (label, key, min, max, step = 1) => {
       return createElement('div', { className: 'setting-item' },
         createElement('label', { className: 'setting-label' }, label),
@@ -1062,7 +1083,7 @@ createElement('div', {},
             // Pitch Display — full width
             createElement('div', { className: 'settings-card full-width' },
               createElement('div', { className: 'settings-card__header' }, 'Pitch Display'),
-              createSlider('Max Pitches Displayed', 'maxPitchesDisplayed', 1, 50, 1),
+              createSlider('Max Pitches Displayed', 'maxPitchesDisplayed', 1, maxPitches, 1),
               createSlider('Pitch Circle Size (px)', 'pitchCircleSize', 32, 50, 1),
               createCheckbox('Show Only Good Pitches', 'showOnlyGoodPitches'),
               createCheckbox('Show Only Bad Pitches', 'showOnlyBadPitches')
@@ -1244,7 +1265,7 @@ createElement('div', {},
           )
         )
       ) : null,
-      this.showSettingsPanel ? this.renderSettingsPanel() : null,
+      this.showSettingsPanel ? this.renderSettingsPanel(data.stats?.totalPitches || 50) : null,
       (() => {
         const tendenciesEl = createTendencies(data.tendencies, data.stats, data.zoneAnalysis, data.powerSequence, this);
         const pitchZoneEl = createElement('div', { className: 'pitch-zone-section' }, createPitchZone(data.pitchZones || [], data.handedness, app?.allowedZones || null));
