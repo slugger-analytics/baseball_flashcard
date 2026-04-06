@@ -1,5 +1,7 @@
 let TEAMS_DATA = {};
 let METADATA = null;
+let cachedSeasonData = null;
+let cachedDateRange = { start: null, end: null, maxVelocity: null, pitchGroup: null };
 // Default settings
 const DEFAULT_SETTINGS = {
   // Zone analysis thresholds
@@ -532,7 +534,26 @@ try {
 
       const pitchLabel = { All: 'All Pitches', Fastballs: 'Fastballs', Breaking: 'Breaking', Offspeed: 'Offspeed' }[pitchGroup] || 'All Pitches';
       const base = `Loading ${pitchLabel} (with Max Velocity of ${maxVelocity} MPH)`;
-      this.loadingMessage = seasonYear ? `${base} for the ${seasonYear} Full Season...` : `${base}...`;
+      // --- CACHE CHECK ---
+      const cacheCoversRange =
+        cachedSeasonData !== null &&
+        cachedDateRange.start !== null &&
+        startDate >= cachedDateRange.start &&
+        endDate <= cachedDateRange.end &&
+        cachedDateRange.maxVelocity === String(maxVelocity) &&
+        cachedDateRange.pitchGroup === pitchGroup;
+
+      if (cacheCoversRange) {
+        TEAMS_DATA = cachedSeasonData.teamsData;
+        METADATA = cachedSeasonData.metadata;
+        this.currentScreen = 'teamSelect';
+        this.render();
+        return;
+      }
+
+      this.loadingMessage = seasonYear
+        ? `${base} for the ${seasonYear} Full Season. This may take a few minutes...`
+        : `${base}...`;
       this.render();
 
       const response = await fetch(
@@ -570,6 +591,10 @@ try {
         this.render();
         return;
       }
+
+      // --- CACHE WRITE ---
+      cachedSeasonData = { teamsData: data.teamsData, metadata: data.metadata };
+      cachedDateRange  = { start: startDate, end: endDate, maxVelocity: String(maxVelocity), pitchGroup };
 
       TEAMS_DATA = data.teamsData;
       METADATA = data.metadata;

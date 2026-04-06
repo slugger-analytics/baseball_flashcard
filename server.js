@@ -3,6 +3,8 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
+const fs = require('fs');
+const path = require('path');
 
 const app = express();
 app.use(cors());
@@ -92,16 +94,19 @@ async function sluggerRequest(endpoint, params = {}) {
  * @returns {Promise<Array>} Combined array of all records across all pages.
  */
 async function fetchAllPages(endpoint, params = {}) {
+  const MAX_PAGES = 500;
   let allData = [], page = 1, hasMore = true;
-  while (hasMore && page <= 10) {
+  while (hasMore && page <= MAX_PAGES) {
     const response = await sluggerRequest(endpoint, { ...params, page, limit: 1000 });
     if (response.success && response.data) {
       const items = Array.isArray(response.data) ? response.data : [response.data];
       allData = allData.concat(items);
       hasMore = items.length === 1000;
+      if (hasMore) console.log(`  Fetching page ${page + 1} (${allData.length} records so far)...`);
       page++;
     } else hasMore = false;
   }
+  if (page > MAX_PAGES) console.warn(`⚠️  fetchAllPages hit the ${MAX_PAGES}-page safety ceiling on ${endpoint}`);
   return allData;
 }
 
@@ -168,20 +173,38 @@ function getTeamName(code) {
  */
 async function fetchPitchesByDateRange(startDateStr, endDateStr) {
   const cacheKey = `${startDateStr}_${endDateStr}`;
+  const cacheFile = path.join(__dirname, `cache_${startDateStr}_${endDateStr}.json`);
 
   if (pitchDataCache.has(cacheKey)) {
     const cached = pitchDataCache.get(cacheKey);
-    console.log(`✅ Cache hit: returning ${cached.length} pitches for ${startDateStr} to ${endDateStr}`);
+    console.log(`✅ Memory cache hit: returning ${cached.length} pitches for ${startDateStr} to ${endDateStr}`);
     return cached;
   }
 
+  if (fs.existsSync(cacheFile)) {
+    console.log(`💾 Disk cache hit: streaming ${cacheFile}`);
+    const streamJsonDir = path.dirname(require.resolve('stream-json'));
+    const streamArray = require(path.join(streamJsonDir, 'streamers', 'stream-array.js'));
+    const filtered = await new Promise((resolve, reject) => {
+      const items = [];
+      const pipeline = streamArray.withParserAsStream();
+      pipeline.on('data', ({ value }) => items.push(value));
+      pipeline.on('finish', () => resolve(items));
+      pipeline.on('error', reject);
+      fs.createReadStream(cacheFile).pipe(pipeline);
+    });
+    console.log(`💾 Disk cache loaded: ${filtered.length} pitches`);
+    pitchDataCache.set(cacheKey, filtered);
+    return filtered;
+  }
+
     console.log(`Fetching date range from SLUGGER API: ${startDateStr} to ${endDateStr}`);
-    
+
     try {
         // This uses the legacy helper to automatically handle pagination if there are >1000 pitches!
-        const pitches = await fetchAllPages('/pitches', { 
-            date_range_start: startDateStr, 
-            date_range_end: endDateStr 
+        const pitches = await fetchAllPages('/pitches', {
+            date_range_start: startDateStr,
+            date_range_end: endDateStr
         });
 
         console.log(`✅ Success: Fetched ${pitches.length} pitches from API`);
@@ -192,12 +215,26 @@ async function fetchPitchesByDateRange(startDateStr, endDateStr) {
         });
         console.log(`✅ After date filter (${startDateStr} → ${endDateStr}): ${filtered.length} pitches`);
 
+        await new Promise((resolve, reject) => {
+          const stream = fs.createWriteStream(cacheFile);
+          stream.on('error', reject);
+          stream.on('finish', resolve);
+          stream.write('[');
+          for (let i = 0; i < filtered.length; i++) {
+            stream.write(JSON.stringify(filtered[i]));
+            if (i < filtered.length - 1) stream.write(',');
+          }
+          stream.write(']');
+          stream.end();
+        });
+        console.log(`💾 Disk cache written: ${cacheFile}`);
+
         pitchDataCache.set(cacheKey, filtered);
         return filtered;
 
     } catch (error) {
         console.error("❌ Error fetching from SLUGGER API:", error);
-        return []; 
+        return [];
     }
 }
 
