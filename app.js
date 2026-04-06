@@ -1073,9 +1073,10 @@ createElement('div', {},
             value: CURRENT_SETTINGS[key],
             className: 'setting-slider',
             oninput: (e) => {
-              const value = parseFloat(e.target.value);
-              this.updateSetting(key, value);
-              e.target.parentElement.querySelector('.setting-number-input').value = value;
+              e.target.parentElement.querySelector('.setting-number-input').value = e.target.value;
+            },
+            onchange: (e) => {
+              this.updateSetting(key, parseFloat(e.target.value));
             }
           }),
           createElement('input', {
@@ -1088,25 +1089,33 @@ createElement('div', {},
             oninput: (e) => {
               const value = parseFloat(e.target.value);
               if (value >= min && value <= max) {
-                this.updateSetting(key, value);
                 e.target.parentElement.querySelector('.setting-slider').value = value;
+              }
+            },
+            onchange: (e) => {
+              const value = parseFloat(e.target.value);
+              if (value >= min && value <= max) {
+                this.updateSetting(key, value);
               }
             }
           })
         )
       );
     };
-    const createCheckbox = (label, key) => {
+    const createCheckbox = (label, key, colorClass = '') => {
       return createElement('div', { className: 'setting-item' },
         createElement('label', { className: 'setting-label' }, label),
-        createElement('input', {
-          type: 'checkbox',
-          checked: CURRENT_SETTINGS[key],
-          className: 'setting-checkbox',
-          onchange: (e) => {
-            this.updateSetting(key, e.target.checked);
-          }
-        })
+        createElement('label', { className: 'toggle-switch' },
+          createElement('input', {
+            type: 'checkbox',
+            checked: CURRENT_SETTINGS[key],
+            className: 'toggle-input',
+            onchange: (e) => {
+              this.updateSetting(key, e.target.checked);
+            }
+          }),
+          createElement('span', { className: `toggle-track${colorClass ? ' ' + colorClass : ''}` })
+        )
       );
     };
     return createElement('div', { className: 'settings-overlay', onclick: () => this.toggleSettings() },
@@ -1127,8 +1136,8 @@ createElement('div', {},
               createElement('div', { className: 'settings-card__header' }, 'Pitch Display'),
               createSlider('Max Pitches Displayed', 'maxPitchesDisplayed', 1, maxPitches, 1),
               createSlider('Pitch Circle Size (px)', 'pitchCircleSize', 32, 50, 1),
-              createCheckbox('Show Only Good Pitches', 'showOnlyGoodPitches'),
-              createCheckbox('Show Only Bad Pitches', 'showOnlyBadPitches')
+              createCheckbox('Show Only Good Pitches', 'showOnlyGoodPitches', 'toggle-green'),
+              createCheckbox('Show Only Bad Pitches', 'showOnlyBadPitches', 'toggle-red')
             ),
 
             // Zone Analysis — full width
@@ -1161,11 +1170,11 @@ createElement('div', {},
           createElement('button', {
             className: 'info-btn',
             onclick: () => this.toggleInfo()
-          }, '?'),
+          }, '💡'),
           createElement('button', {
             className: 'settings-btn',
             onclick: () => this.toggleSettings()
-          }, '⚙')
+          }, '⚙︎')
         ),
         createElement('div', { className: 'header__controls' },
           createElement('span', { className: 'chip back-chip', onclick: () => this.showLineup(this.selectedTeam) }, '⮜ Lineup'),
