@@ -434,6 +434,8 @@ class FlashcardApp {
     this.selectedBatterIndex = 0;
     this.showInfoPanel = false;
     this.showSettingsPanel = false;
+    this.sortBy = 'number';
+    this.sortOrder = 'asc';
     const defaults = getDefaultSeasonDates();
     this.lastStartDate = defaults.start;
     this.lastEndDate = defaults.end;
@@ -537,7 +539,7 @@ class FlashcardApp {
    * @param {string} [pitchGroup='All'] - Pitch type filter: 'All', 'Fastballs', 'Breaking', or 'Offspeed'.
    * @returns {Promise<void>}
    */
-  async loadDataRange(startDate, endDate, maxVelocity = 105, seasonYear = null, pitchGroup = 'All') {
+  async loadDataRange(startDate, endDate, maxVelocity = 105, seasonYear = null, pitchGroup = 'All', dateLabel = null) {
 try {
       this.currentScreen = 'loading';
 
@@ -559,7 +561,7 @@ try {
         return;
       }
 
-      this.loadingParams = { pitchGroup: pitchLabel, maxVelocity, seasonYear };
+      this.loadingParams = { pitchGroup: pitchLabel, maxVelocity, seasonYear, startDate, endDate, dateLabel };
       this.render();
 
       const response = await fetch(
@@ -649,7 +651,8 @@ try {
       // retain the dates in the calendar memory
       this.lastStartDate = startStr;
       this.lastEndDate = endStr;
-      this.loadDataRange(startStr, endStr, maxVel, seasonYear, pitchGroup);
+      const dateLabel = days === 7 ? 'Last 7 Days' : days === 30 ? 'Last 30 Days' : null;
+      this.loadDataRange(startStr, endStr, maxVel, seasonYear, pitchGroup, dateLabel);
 }
 
   showDateSelect() { this.currentScreen = 'dateSelect'; this.validationError = null; this.noDataError = null; this.render(); }
@@ -686,23 +689,25 @@ try {
     }, 500);
 
     const params = this.loadingParams || {};
-    const tickerChildren = [
-      'Loading data for ',
-      createElement('span', { className: 'ticker-var--blue' }, params.pitchGroup || 'All Pitches'),
-      ' with max velocity ',
-      createElement('span', { className: 'ticker-var--red' }, (params.maxVelocity || '105') + ' MPH'),
+    const pillRow = [
+      createElement('div', { className: 'filter-pill pill-pitch' }, params.pitchGroup || 'All Pitches'),
+      createElement('div', { className: 'filter-pill pill-velo' }, `≤ ${params.maxVelocity || 105} MPH`),
     ];
-    if (params.seasonYear) {
-      tickerChildren.push(' for the ');
-      tickerChildren.push(createElement('span', { className: 'ticker-var--green' }, params.seasonYear + ' Full Season'));
+    let seasonText;
+    if (params.dateLabel) {
+      seasonText = params.dateLabel;
+    } else if (params.seasonYear) {
+      seasonText = `${params.seasonYear} Full Season`;
+    } else {
+      const fmt = d => { if (!d) return '?'; const [y,m,day] = d.split('-'); return `${parseInt(m)}/${parseInt(day)}/${y.slice(2)}`; };
+      seasonText = `${fmt(params.startDate)} → ${fmt(params.endDate)}`;
     }
-    tickerChildren.push(' (this may take up to a few minutes...)');
+    pillRow.push(createElement('div', { className: 'filter-pill pill-season' }, seasonText));
 
     return createElement('div', { className: 'team-select-screen loading-screen' },
       createElement('h1', {}, 'Loading', dotsSpan),
-      createElement('div', { className: 'ticker-wrap' },
-        createElement('span', { className: 'ticker-text' }, ...tickerChildren)
-      )
+      createElement('p', { className: 'loading-subtitle' }, 'This may take a few minutes...'),
+      createElement('div', { className: 'filter-pill-row' }, ...pillRow)
     );
   }
   renderError() {
@@ -987,7 +992,7 @@ createElement('div', {},
         createElement('div', { style: { display: 'flex', gap: '10px', justifyContent: 'center', marginBottom: '20px' } },
           createElement('span', { className: 'info-bubble' }, `${teams.length} teams`),
           createElement('span', { style: { fontSize: '18px', lineHeight: '1', alignSelf: 'center' } }, '⚾'),
-          createElement('span', { className: 'info-bubble' }, `${METADATA?.startDate || 'N/A'} → ${METADATA?.endDate || 'N/A'}`)
+          createElement('span', { className: 'info-bubble' }, (() => { const fmt = d => { if (!d) return 'N/A'; const [y,m,day] = d.split('-'); return `${parseInt(m)}/${parseInt(day)}/${y.slice(2)}`; }; return `${fmt(METADATA?.startDate)} → ${fmt(METADATA?.endDate)}`; })())
         ),
         createElement('button', { className: 'back-btn', onclick: () => this.showDateSelect() }, '⮜ Change Dates')
       ),
@@ -995,25 +1000,62 @@ createElement('div', {},
     );
   }
 
+  sortRoster(lineup) {
+    return [...lineup].sort((a, b) => {
+      let cmp = 0;
+      if (this.sortBy === 'number') {
+        cmp = (a.jerseyNumber || 0) - (b.jerseyNumber || 0);
+      } else if (this.sortBy === 'name') {
+        cmp = (a.batter || '').localeCompare(b.batter || '');
+      } else if (this.sortBy === 'handedness') {
+        cmp = (a.handedness || '').localeCompare(b.handedness || '');
+        if (cmp === 0) cmp = (a.batter || '').localeCompare(b.batter || '');
+      } else if (this.sortBy === 'pitches') {
+        cmp = (a.stats?.totalPitches || 0) - (b.stats?.totalPitches || 0);
+      }
+      return this.sortOrder === 'asc' ? cmp : -cmp;
+    });
+  }
   renderLineup() {
     const lineup = TEAMS_DATA[this.selectedTeam];
-    const cards = lineup.map((batter, i) => {
+    const sorted = this.sortRoster(lineup);
+    const cards = sorted.map((batter) => {
+      const origIdx = lineup.indexOf(batter);
       return createElement('div', {
         className: 'mini-card',
-        onclick: () => this.showFlashcard(i)
+        onclick: () => this.showFlashcard(origIdx)
       },
-        createElement('div', { className: 'mini-card-order' }, `#${i + 1}`),
+        createElement('div', { className: 'mini-card-order' }, `#${batter.jerseyNumber || (origIdx + 1)}`),
         createElement('div', { className: 'mini-card-name' }, batter.batter),
         createElement('div', { className: `mini-card-hand ${batter.handedness}` }, batter.handedness),
         createElement('div', { className: 'mini-card-pitches' }, `${batter.stats?.totalPitches || 0} pitches`)
       );
     });
+    const sortOptions = [
+      { value: 'number',   label: 'Jersey Number' },
+      { value: 'name',     label: 'Name' },
+      { value: 'handedness', label: 'Handedness' },
+      { value: 'pitches', label: 'Total Pitches' },
+    ];
+    const self = this;
     return createElement('div', { className: 'lineup-screen' },
       createElement('div', { className: 'lineup-header' },
         createElement('button', { className: 'back-btn', onclick: () => this.showTeamSelect() }, '⮜ Teams'),
         createElement('h1', {}, `${this.selectedTeam} Lineup`),
         createElement('span', { className: 'info-bubble' }, `${lineup.length} batters`),
         createElement('button', { className: 'print-btn', onclick: () => this.printLineup() }, 'Print Lineup')
+      ),
+      createElement('div', { className: 'sort-container' },
+        createElement('select', {
+          className: 'sort-select',
+          onchange: (e) => { self.sortBy = e.target.value; self.render(); }
+        },
+          ...sortOptions.map(opt => createElement('option', { value: opt.value, ...(self.sortBy === opt.value ? { selected: true } : {}) }, opt.label))
+        ),
+        createElement('button', {
+          className: `sort-toggle-btn${self.sortOrder === 'desc' ? ' active' : ''}`,
+          onclick: () => { self.sortOrder = self.sortOrder === 'asc' ? 'desc' : 'asc'; self.render(); }
+        }, '⇅')
       ),
       createElement('div', { className: 'lineup-grid' }, ...cards)
     );

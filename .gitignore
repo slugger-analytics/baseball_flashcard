@@ -4,4 +4,4 @@ node_modules/
 
 node_modules/
 .vercel
-cache_*.json
+cache/

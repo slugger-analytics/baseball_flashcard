@@ -63,7 +63,6 @@ const SLUGGER_CONFIG = {
 };
 
 const lookupCache = { players: new Map(), teams: new Map(), ballparks: new Map() };
-const pitchDataCache = new Map(); // Cache pitch data by date
 
 const TEAM_DISPLAY_NAMES = {
   'YOR': 'York Revolution', 'LI': 'Long Island Ducks', 'LAN': 'Lancaster Stormers',
@@ -172,14 +171,9 @@ function getTeamName(code) {
  * @returns {Promise<Array>} Array of raw pitch objects, or empty array on error.
  */
 async function fetchPitchesByDateRange(startDateStr, endDateStr) {
-  const cacheKey = `${startDateStr}_${endDateStr}`;
-  const cacheFile = path.join(__dirname, `cache_${startDateStr}_${endDateStr}.json`);
-
-  if (pitchDataCache.has(cacheKey)) {
-    const cached = pitchDataCache.get(cacheKey);
-    console.log(`✅ Memory cache hit: returning ${cached.length} pitches for ${startDateStr} to ${endDateStr}`);
-    return cached;
-  }
+  const cacheDir = path.join(__dirname, 'cache');
+  if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir);
+  const cacheFile = path.join(cacheDir, `cache_${startDateStr}_${endDateStr}.json`);
 
   if (fs.existsSync(cacheFile)) {
     console.log(`💾 Disk cache hit: streaming ${cacheFile}`);
@@ -194,7 +188,6 @@ async function fetchPitchesByDateRange(startDateStr, endDateStr) {
       fs.createReadStream(cacheFile).pipe(pipeline);
     });
     console.log(`💾 Disk cache loaded: ${filtered.length} pitches`);
-    pitchDataCache.set(cacheKey, filtered);
     return filtered;
   }
 
@@ -229,7 +222,6 @@ async function fetchPitchesByDateRange(startDateStr, endDateStr) {
         });
         console.log(`💾 Disk cache written: ${cacheFile}`);
 
-        pitchDataCache.set(cacheKey, filtered);
         return filtered;
 
     } catch (error) {

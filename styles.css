@@ -75,37 +75,32 @@ html, body {
   animation-duration: 4s;
 }
 
-/* ── Loading ticker ── */
-.ticker-wrap {
-  overflow: hidden;
-  white-space: nowrap;
-  width: 100%;
-  margin-top: 8px;
+/* ── Loading pills ── */
+.loading-subtitle {
+  font-size: 1rem;
+  color: var(--muted);
+  margin-bottom: 12px;
+}
+
+.filter-pill-row {
   display: flex;
+  gap: 8px;
   justify-content: center;
   align-items: center;
+  flex-wrap: wrap;
 }
 
-.ticker-text {
-  position: relative;
-  font-size: 1.1rem;
-  letter-spacing: 0.5px;
-  color: var(--muted);
-  animation: ticker-scroll 16s ease-in-out infinite;
+.filter-pill {
+  padding: 4px 14px;
+  border-radius: 99px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #ffffff;
 }
 
-.ticker-var--blue  { font-weight: 700; color: #2563eb; }
-.ticker-var--red   { font-weight: 700; color: #dc2626; }
-.ticker-var--green { font-weight: 700; color: #16a34a; }
-
-@keyframes ticker-scroll {
-  0%   { transform: translateX(0);     opacity: 1; }
-  15%  { transform: translateX(0);     opacity: 1; }
-  45%  { transform: translateX(120%);  opacity: 0; }
-  50%  { transform: translateX(-120%); opacity: 0; }
-  85%  { transform: translateX(0);     opacity: 1; }
-  100% { transform: translateX(0);     opacity: 1; }
-}
+.pill-pitch  { background-color: #2563eb; }
+.pill-velo   { background-color: #dc2626; }
+.pill-season { background-color: #16a34a; }
 
 .team-select-screen p {
   font-size: 18px;
@@ -190,7 +185,7 @@ html, body {
 }
 
 .info-bubble {
-  background: #2f66af;
+  background: #3a7fda;
   color: #ffffff;
   padding: 4px 14px;
   border-radius: 20px;
@@ -366,6 +361,63 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
 
 .lineup-header .print-btn:hover {
   transform: translateY(calc(-50% - 2px));
+}
+
+/* ── Roster sort controls ── */
+.sort-container {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px 12px;
+}
+
+.sort-select {
+  padding: 6px 16px;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  color: #2f3e55;
+  cursor: pointer;
+  outline: none;
+  appearance: none;
+  text-align: center;
+  text-align-last: center;
+  transition: border-color 0.15s;
+}
+
+.sort-select:focus,
+.sort-select:hover {
+  border-color: #2f66af;
+}
+
+.sort-toggle-btn {
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  font-size: 16px;
+  font-weight: 700;
+  font-family: inherit;
+  color: #2f3e55;
+  cursor: pointer;
+  line-height: 1;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.sort-toggle-btn:hover {
+  background: #f0f4ff;
+  border-color: #2f66af;
+  color: #2f66af;
+}
+
+.sort-toggle-btn.active {
+  border-color: var(--accent);
+  box-shadow: 0 12px 24px -8px rgba(59, 130, 246, 0.6);
+  color: var(--accent);
 }
 
 .lineup-grid {
