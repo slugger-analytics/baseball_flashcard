@@ -75,6 +75,15 @@ html, body {
   animation-duration: 4s;
 }
 
+@keyframes loading-subtitle-breathe {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.25; }
+}
+
+.loading-subtitle {
+  animation: loading-subtitle-breathe 2.2s ease-in-out infinite;
+}
+
 /* ── Loading pills ── */
 .loading-subtitle {
   font-size: 1rem;
@@ -753,7 +762,7 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
 }
 
 .info-btn, .settings-btn {
-  background: #dbeafe;
+  background: #93c5fd;
   color: #1e40af;
   border: none;
   border-radius: 50%;
@@ -771,7 +780,7 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
   box-shadow: var(--shadow-md);
 }
 
-.settings-btn { background: #9dc2f1; color: #e9eaee; }
+.settings-btn { background: #475569; color: #ffffff; }
 
 /* Information & Tendencies Cards */
 .tendencies, .power-sequence {

@@ -13,6 +13,7 @@ const DEFAULT_SETTINGS = {
   maxPitchesDisplayed: 10,
   showOnlyGoodPitches: false,
   showOnlyBadPitches: false,
+  showAllZones: false,
   pitchCircleSize: 32
 };
 let CURRENT_SETTINGS = { ...DEFAULT_SETTINGS };
@@ -102,47 +103,35 @@ function createElement(tag, props = {}, ...children) {
  * @param {Array<string>|null} [allowedZones=null] - Zone keys to show; null means show all.
  * @returns {HTMLElement} A div containing the SVG pitch zone graphic.
  */
-function createPitchZone(zones, handedness, allowedZones = null) {
-  const safeZones = Array.isArray(zones) ? zones : [];
-  // Apply pitch filtering based on settings
-  let filteredZones = safeZones;
-
-  // if the weakness slider has restricted zones, only show those
-  if (allowedZones !== null) {
-    if (allowedZones.length > 0) {
-      // Filter green circles to allowed vulnerable zones; filter red circles to allowed hot zones
-      const allowedBadZones = (typeof app !== 'undefined' && app?.allowedBadZones) ?? null;
-      filteredZones = filteredZones.filter(z => {
-        if (z.good === true)  return allowedZones.includes(z.zone);
-        if (z.good === false) return allowedBadZones === null || allowedBadZones.includes(z.zone);
-        return true;
-      });
-    } else {
-      // No vulnerable zones identified — at strict/balanced, show only good pitches
-      // At broad (threshold = 60), show everything
-      const threshold = CURRENT_SETTINGS.vulnerableZoneThreshold;
-      if (threshold <= 35) {
-        filteredZones = filteredZones.filter(z => z.good === true);
+function getFullyFilteredPitches(zones) {
+  let fz = Array.isArray(zones) ? [...zones] : [];
+  if (!CURRENT_SETTINGS.showAllZones) {
+    const az = (typeof app !== 'undefined' && app?.allowedZones) ?? null;
+    if (az !== null) {
+      if (az.length > 0) {
+        const abz = (typeof app !== 'undefined' && app?.allowedBadZones) ?? null;
+        fz = fz.filter(z => {
+          if (z.good === true)  return az.includes(z.zone);
+          if (z.good === false) return abz === null || abz.includes(z.zone);
+          return true;
+        });
+      } else {
+        if (CURRENT_SETTINGS.vulnerableZoneThreshold <= 35) {
+          fz = fz.filter(z => z.good === true);
+        }
       }
     }
   }
-
   if (CURRENT_SETTINGS.showOnlyGoodPitches && !CURRENT_SETTINGS.showOnlyBadPitches) {
-    filteredZones = filteredZones.filter(z => z.good === true);
+    fz = fz.filter(z => z.good === true);
   } else if (CURRENT_SETTINGS.showOnlyBadPitches && !CURRENT_SETTINGS.showOnlyGoodPitches) {
-    filteredZones = filteredZones.filter(z => z.good === false);
+    fz = fz.filter(z => z.good === false);
   }
-  // Apply max pitches limit
-  let displayZones = filteredZones;
-  const maxPitches = CURRENT_SETTINGS.maxPitchesDisplayed;
-  if (filteredZones.length > maxPitches) {
-    const step = filteredZones.length / maxPitches;
-    displayZones = [];
-    for (let i = 0; i < maxPitches; i++) {
-      const index = Math.floor(i * step);
-      displayZones.push(filteredZones[index]);
-    }
-  }
+  return fz;
+}
+function createPitchZone(preFilteredZones, handedness) {
+  const filteredZones = Array.isArray(preFilteredZones) ? preFilteredZones : [];
+  const displayZones = filteredZones.slice(0, CURRENT_SETTINGS.maxPitchesDisplayed);
   const pitchElements = displayZones.map(zone => {
     const [x, y] = zone.position || [50, 50];
     const pitchType = zone.pitch || 'F';
@@ -173,10 +162,11 @@ function createPitchZone(zones, handedness, allowedZones = null) {
   }, svgImg);
   const pitchZone = createElement('div', { className: 'pitch-zone' }, ...pitchElements);
   pitchZone.style.setProperty('--pitch-circle-size', `${CURRENT_SETTINGS.pitchCircleSize}px`);
-  return createElement('div', { className: 'pitch-zone-container' },
+  const el = createElement('div', { className: 'pitch-zone-container' },
     batterGraphic,
     pitchZone
   );
+  return { el, count: displayZones.length, available: filteredZones.length };
 }
 /**
  * Builds the batter header block showing handedness badge, name, and total pitch count.
@@ -185,16 +175,17 @@ function createPitchZone(zones, handedness, allowedZones = null) {
  * @param {Array} pitchZones - Raw pitch zone array used only to compute total pitch count.
  * @returns {HTMLElement}
  */
-function createBatterGraphic(handedness, batterName, pitchZones) {
+function createBatterGraphic(handedness, batterName, renderedCount, availableCount) {
   const isLeftHanded = handedness === 'LHB';
-  const totalPitches = Array.isArray(pitchZones) ? pitchZones.length : 0;
   const handText = isLeftHanded ? 'LEFT-HANDED BATTER' : 'RIGHT-HANDED BATTER';
+  const countLabel = availableCount != null && availableCount !== renderedCount
+    ? `Showing: ${renderedCount} / ${availableCount} pitches`
+    : `Showing: ${renderedCount} pitches`;
   return createElement('div', { className: 'batter-section' },
     createElement('div', { className: 'handedness-badge' }, handText),
     createElement('div', { className: 'batter-info' },
       createElement('div', { className: 'batter-name' }, batterName || 'Unknown'),
-      createElement('div', { className: 'batter-stats' },
-        `Total Pitches: ${totalPitches}`)
+      createElement('div', { className: 'batter-stats' }, countLabel)
     )
   );
 }
@@ -470,9 +461,8 @@ class FlashcardApp {
         metaBits.length ? createElement('span', { className: 'meta' }, metaBits.join(' • ')) : null
       )
     );
-    const pitchSection = createElement('div', { className: 'pitch-zone-section' },
-      createPitchZone(batter.pitchZones || [], batter.handedness, app?.allowedZones || null)
-    );
+    const { el: pitchZoneInnerPrint } = createPitchZone(getFullyFilteredPitches(batter.pitchZones || []), batter.handedness);
+    const pitchSection = createElement('div', { className: 'pitch-zone-section' }, pitchZoneInnerPrint);
     const infoSection = createTendencies(batter.tendencies, batter.stats, batter.zoneAnalysis, batter.powerSequence, null);
     const widget = createElement('div', { className: 'widget print-widget' },
       header,
@@ -523,6 +513,17 @@ class FlashcardApp {
   updateSetting(key, value) {
     CURRENT_SETTINGS[key] = value;
     this.render();
+  }
+  updatePitchZone() {
+    const pzSection = this.container.querySelector('.pitch-zone-section');
+    if (!pzSection) return;
+    const lineup = TEAMS_DATA[this.selectedTeam];
+    if (!lineup) return;
+    const data = lineup[this.selectedBatterIndex];
+    if (!data) return;
+    const { el } = createPitchZone(getFullyFilteredPitches(data.pitchZones || []), data.handedness);
+    pzSection.innerHTML = '';
+    pzSection.appendChild(el);
   }
   resetSettings() {
     CURRENT_SETTINGS = { ...DEFAULT_SETTINGS };
@@ -1060,7 +1061,12 @@ createElement('div', {},
       createElement('div', { className: 'lineup-grid' }, ...cards)
     );
   }
-  renderSettingsPanel(maxPitches = 50) {
+  renderSettingsPanel(rawCount = 0, filteredCount = 0, goodCount = 0, badCount = 0) {
+    // Clamp current value so slider and number input stay within effective range
+    const sliderMax = CURRENT_SETTINGS.showAllZones ? rawCount : filteredCount;
+    if (CURRENT_SETTINGS.maxPitchesDisplayed > sliderMax) {
+      CURRENT_SETTINGS.maxPitchesDisplayed = sliderMax;
+    }
     const createSlider = (label, key, min, max, step = 1) => {
       return createElement('div', { className: 'setting-item' },
         createElement('label', { className: 'setting-label' }, label),
@@ -1073,7 +1079,10 @@ createElement('div', {},
             value: CURRENT_SETTINGS[key],
             className: 'setting-slider',
             oninput: (e) => {
-              e.target.parentElement.querySelector('.setting-number-input').value = e.target.value;
+              const value = parseFloat(e.target.value);
+              CURRENT_SETTINGS[key] = value;
+              e.target.parentElement.querySelector('.setting-number-input').value = value;
+              this.updatePitchZone();
             },
             onchange: (e) => {
               this.updateSetting(key, parseFloat(e.target.value));
@@ -1089,7 +1098,9 @@ createElement('div', {},
             oninput: (e) => {
               const value = parseFloat(e.target.value);
               if (value >= min && value <= max) {
+                CURRENT_SETTINGS[key] = value;
                 e.target.parentElement.querySelector('.setting-slider').value = value;
+                this.updatePitchZone();
               }
             },
             onchange: (e) => {
@@ -1134,8 +1145,22 @@ createElement('div', {},
             // Pitch Display — full width
             createElement('div', { className: 'settings-card full-width' },
               createElement('div', { className: 'settings-card__header' }, 'Pitch Display'),
-              createSlider('Max Pitches Displayed', 'maxPitchesDisplayed', 1, maxPitches, 1),
+              createElement('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '8px', justifyContent: 'center', marginBottom: '12px' } },
+                ...[
+                  { label: 'Total Pitches',          value: rawCount,      bg: '#f1f5f9', border: '#cbd5e1', textColor: '#1e293b' },
+                  { label: 'Matching Filters',        value: filteredCount, bg: '#eff6ff', border: '#93c5fd', textColor: '#1d4ed8' },
+                  { label: 'Total Good Pitches',      value: goodCount,     bg: '#f0fdf4', border: '#86efac', textColor: '#15803d' },
+                  { label: 'Total Bad Pitches',       value: badCount,      bg: '#fef2f2', border: '#fca5a5', textColor: '#b91c1c' },
+                ].map(({ label, value, bg, border, textColor }) =>
+                  createElement('div', { style: { display: 'inline-flex', flexDirection: 'column', alignItems: 'center', background: bg, border: `1px solid ${border}`, borderRadius: '10px', padding: '6px 14px', minWidth: '80px' } },
+                    createElement('span', { style: { fontSize: '18px', fontWeight: '800', color: textColor, lineHeight: '1.1' } }, value),
+                    createElement('span', { style: { fontSize: '11px', fontWeight: '500', color: '#64748b', marginTop: '2px', textAlign: 'center' } }, label)
+                  )
+                )
+              ),
+              createSlider('Max Pitches Displayed', 'maxPitchesDisplayed', 1, CURRENT_SETTINGS.showAllZones ? rawCount : filteredCount, 1),
               createSlider('Pitch Circle Size (px)', 'pitchCircleSize', 32, 50, 1),
+              createCheckbox('Show All Zones (bypass filter)', 'showAllZones'),
               createCheckbox('Show Only Good Pitches', 'showOnlyGoodPitches', 'toggle-green'),
               createCheckbox('Show Only Bad Pitches', 'showOnlyBadPitches', 'toggle-red')
             ),
@@ -1316,18 +1341,32 @@ createElement('div', {},
           )
         )
       ) : null,
-      this.showSettingsPanel ? this.renderSettingsPanel(data.stats?.totalPitches || 50) : null,
       (() => {
+        // createTendencies MUST run first — it sets app.allowedZones for the current threshold
         const tendenciesEl = createTendencies(data.tendencies, data.stats, data.zoneAnalysis, data.powerSequence, this);
-        const pitchZoneEl = createElement('div', { className: 'pitch-zone-section' }, createPitchZone(data.pitchZones || [], data.handedness, app?.allowedZones || null));
-        const batterEl = createBatterGraphic(data.handedness, data.batter, data.pitchZones);
+
+        // NOW read the freshly-updated app.allowedZones
+        const rawZones = data.pitchZones || [];
+        const fullyFilteredPitches = getFullyFilteredPitches(rawZones);
+        this._tendenciesEl = tendenciesEl;
+        this._fullyFilteredPitches = fullyFilteredPitches;
+        this._rawZoneCount = rawZones.length;
+        const countSource = CURRENT_SETTINGS.showAllZones ? rawZones : fullyFilteredPitches;
+        this._goodCount = countSource.filter(z => z.good === true).length;
+        this._badCount = countSource.filter(z => z.good === false).length;
+      })(),
+      this.showSettingsPanel ? this.renderSettingsPanel(this._rawZoneCount, this._fullyFilteredPitches.length, this._goodCount, this._badCount) : null,
+      (() => {
+        const { el: pitchZoneInner, count: renderedCount, available: availableCount } = createPitchZone(this._fullyFilteredPitches, data.handedness);
+        const pitchZoneEl = createElement('div', { className: 'pitch-zone-section' }, pitchZoneInner);
+        const batterEl = createBatterGraphic(data.handedness, data.batter, renderedCount, availableCount);
 
         const frag = document.createDocumentFragment();
         frag.appendChild(pitchZoneEl);
         frag.appendChild(batterEl);
-        frag.appendChild(tendenciesEl);
+        frag.appendChild(this._tendenciesEl);
         return frag;
-      }) ()
+      })()
     );
   }
   render() {
