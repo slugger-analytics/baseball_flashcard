@@ -421,7 +421,7 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
   border: none;
   border-right: 1px solid #e2e8f0;
   border-radius: 0;
-  padding: 10px 28px 10px 16px;
+  padding: 10px 16px;
   font-size: 14px;
   font-weight: 600;
   font-family: inherit;
@@ -792,7 +792,7 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
 }
 
 .info-btn, .settings-btn {
-  background: #93c5fd;
+  background: #bfdbfe;
   color: #1e40af;
   border: none;
   border-radius: 50%;
@@ -810,7 +810,7 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
   box-shadow: var(--shadow-md);
 }
 
-.settings-btn { background: #475569; color: #ffffff; }
+.settings-btn { background: #64748b; color: #ffffff; }
 
 /* Information & Tendencies Cards */
 .tendencies, .power-sequence {
@@ -922,18 +922,19 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
   padding: 24px 28px 18px;
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
+  text-align: center;
 }
 
 .info-modal__title {
   margin: 0 0 4px;
-  font-size: 19px;
+  font-size: 22px;
   font-weight: 700;
   color: var(--text);
 }
 
 .info-modal__subtitle {
   margin: 0;
-  font-size: 13px;
+  font-size: 14px;
   color: var(--muted);
 }
 

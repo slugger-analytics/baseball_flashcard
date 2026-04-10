@@ -1077,7 +1077,7 @@ createElement('div', {},
       createElement('div', { className: 'lineup-grid' }, ...cards)
     );
   }
-  renderSettingsPanel(rawCount = 0, filteredCount = 0, goodCount = 0, badCount = 0, displayedCount = 0, displayedGoodCount = 0, displayedBadCount = 0, docked = false) {
+  renderSettingsPanel(rawCount = 0, filteredCount = 0, goodCount = 0, badCount = 0, displayedCount = 0, displayedGoodCount = 0, displayedBadCount = 0, statsTotalPitches = 0, docked = false) {
     // Clamp current value into valid range [floor, sliderMax]
     const sliderMax = Math.max(1, CURRENT_SETTINGS.showAllZones ? rawCount : filteredCount);
     const floor = Math.min(DEFAULT_SETTINGS.maxPitchesDisplayed, sliderMax);
@@ -1172,14 +1172,14 @@ createElement('div', {},
             createElement('div', { className: 'settings-card__header' }, 'Pitch Display'),
             createElement('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '8px', justifyContent: 'center', marginBottom: '12px' } },
               ...[
-                { label: 'Total Pitches',                   value: rawCount,         bg: '#f1f5f9', border: '#cbd5e1', textColor: '#1e293b' },
+                { label: 'Total Pitches',                   value: statsTotalPitches || rawCount, bg: '#f1f5f9', border: '#cbd5e1', textColor: '#1e293b' },
                 { label: 'Matching Filters',                 value: displayedCount,    bg: '#eff6ff', border: '#93c5fd', textColor: '#1d4ed8', tooltip: 'Pitches currently shown on the grid (limited by Max Pitches Displayed).' },
                 { label: 'Attack Pitches (Strengths)',       value: displayedGoodCount, bg: '#f0fdf4', border: '#86efac', textColor: '#15803d' },
                 { label: 'Vulnerable Pitches (Weaknesses)',  value: displayedBadCount,  bg: '#fef2f2', border: '#fca5a5', textColor: '#b91c1c' },
               ].map(({ label, value, bg, border, textColor, tooltip }) =>
                 createElement('div', { className: 'stat-pill', ...(tooltip ? { 'data-tooltip': tooltip } : {}), style: { display: 'inline-flex', flexDirection: 'column', alignItems: 'center', background: bg, border: `1px solid ${border}`, borderRadius: '10px', padding: '6px 14px', minWidth: '80px', position: 'relative' } },
-                  createElement('span', { style: { fontSize: '18px', fontWeight: '800', color: textColor, lineHeight: '1.1' } }, value),
-                  createElement('span', { style: { fontSize: '11px', fontWeight: '500', color: '#64748b', marginTop: '2px', textAlign: 'center' } },
+                  createElement('span', { style: { fontSize: '18px', fontWeight: '800', color: textColor, lineHeight: '1.1', textAlign: 'center', width: '100%' } }, value),
+                  createElement('span', { style: { fontSize: '11px', fontWeight: '500', color: '#64748b', marginTop: '2px', textAlign: 'center', width: '100%' } },
                     label,
                     tooltip ? createElement('span', { style: { marginLeft: '4px', fontSize: '11px', color: '#93c5fd', cursor: 'default' } }, '🛈') : null
                   )
@@ -1271,7 +1271,7 @@ createElement('div', {},
 
           // Header
           createElement('div', { className: 'info-modal__header' },
-            createElement('h3', { className: 'info-modal__title' }, 'Understanding the Widget'),
+            createElement('h3', { className: 'info-modal__title' }, 'Understanding the Widget',), 
             createElement('p', { className: 'info-modal__subtitle' }, 'A guide to reading your batter flashcards')
           ),
 
@@ -1385,7 +1385,7 @@ createElement('div', {},
 
           // Footer
           createElement('div', { className: 'info-modal__footer' },
-            createElement('button', { className: 'info-modal__close-btn', onclick: () => this.toggleInfo() }, 'Got it')
+            createElement('button', { className: 'info-modal__close-btn', onclick: () => this.toggleInfo() }, 'Got it!')
           )
         )
       ) : null,
@@ -1399,6 +1399,7 @@ createElement('div', {},
         this._tendenciesEl = tendenciesEl;
         this._fullyFilteredPitches = fullyFilteredPitches;
         this._rawZoneCount = rawZones.length;
+        this._statsTotalPitches = data.stats?.totalPitches || rawZones.length;
         const countSource = CURRENT_SETTINGS.showAllZones ? rawZones : fullyFilteredPitches;
         this._goodCount = countSource.filter(z => z.good === true).length;
         this._badCount = countSource.filter(z => z.good === false).length;
@@ -1407,7 +1408,7 @@ createElement('div', {},
         this._displayedGoodCount = displayedSlice.filter(z => z.good === true).length;
         this._displayedBadCount = displayedSlice.filter(z => z.good === false).length;
       })(),
-      (!this.isSettingsDocked && this.showSettingsPanel) ? this.renderSettingsPanel(this._rawZoneCount, this._fullyFilteredPitches.length, this._goodCount, this._badCount, this._displayedCount, this._displayedGoodCount, this._displayedBadCount) : null,
+      (!this.isSettingsDocked && this.showSettingsPanel) ? this.renderSettingsPanel(this._rawZoneCount, this._fullyFilteredPitches.length, this._goodCount, this._badCount, this._displayedCount, this._displayedGoodCount, this._displayedBadCount, this._statsTotalPitches) : null,
       (() => {
         const { el: pitchZoneInner, count: renderedCount, available: availableCount } = createPitchZone(this._fullyFilteredPitches, data.handedness);
         const pitchZoneEl = createElement('div', { className: 'pitch-zone-section' }, pitchZoneInner);
@@ -1440,7 +1441,7 @@ createElement('div', {},
 
     // After renderFlashcard has run (populating this._rawZoneCount etc.), mount sidebar
     if (this.isSettingsDocked && this.currentScreen === 'flashcard') {
-      const sidebar = this.renderSettingsPanel(this._rawZoneCount, this._fullyFilteredPitches.length, this._goodCount, this._badCount, this._displayedCount, this._displayedGoodCount, this._displayedBadCount, true);
+      const sidebar = this.renderSettingsPanel(this._rawZoneCount, this._fullyFilteredPitches.length, this._goodCount, this._badCount, this._displayedCount, this._displayedGoodCount, this._displayedBadCount, this._statsTotalPitches, true);
       this.container.insertBefore(sidebar, this.container.firstChild);
       this.container.classList.add('app-sidebar-docked');
     }
