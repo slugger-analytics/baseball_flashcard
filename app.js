@@ -6,7 +6,7 @@ let cachedDateRange = { start: null, end: null, maxVelocity: null, pitchGroup: n
 const DEFAULT_SETTINGS = {
   // Zone analysis thresholds
   vulnerableZoneMinSwings: 3,
-  vulnerableZoneThreshold: 35,
+  vulnerableZoneThreshold: 60,
   hotZoneMinHardHits: 2,
   hotZoneHardHitThreshold: 40,
   // Pitch display settings
@@ -14,6 +14,7 @@ const DEFAULT_SETTINGS = {
   showOnlyGoodPitches: false,
   showOnlyBadPitches: false,
   showAllZones: false,
+  showPitcherHand: false,
   pitchCircleSize: 32
 };
 let CURRENT_SETTINGS = { ...DEFAULT_SETTINGS };
@@ -145,7 +146,7 @@ function createPitchZone(preFilteredZones, handedness) {
       title: `${pitchType} (${pitcherHand}HP) — ${isGood ? 'Attack here' : 'Avoid this location'}`
     },
       createElement('span', { className: 'pitch-circle__type' }, pitchType),
-      createElement('span', { className: `pitch-circle__hand ${handClass}` }, pitcherHand)
+      CURRENT_SETTINGS.showPitcherHand ? createElement('span', { className: `pitch-circle__hand ${handClass}` }, pitcherHand) : null
     );
   });
   const isLeftHanded = handedness === 'LHB';
@@ -328,7 +329,7 @@ const confidenceSlider = app ? createElement('div', { style: { padding: '16px', 
     ),
     createElement('div', { style: { display: 'flex', gap: '8px' } },
       ...CONFIDENCE_LEVELS.map(level => {
-        const isActive = level.threshold === vulnThreshold && level.minSwings === CURRENT_SETTINGS.vulnerableZoneMinSwings;
+        const isActive = !CURRENT_SETTINGS.showAllZones && level.threshold === vulnThreshold && level.minSwings === CURRENT_SETTINGS.vulnerableZoneMinSwings;
         return createElement('button', {
           style: {
             flex: '1',
@@ -379,8 +380,11 @@ const confidenceSlider = app ? createElement('div', { style: { padding: '16px', 
 */
   // ------- CONFIDENCE SLIDER END -------
 
+  const confidenceWidget = CURRENT_SETTINGS.showAllZones
+    ? createElement('div', { style: { opacity: '0.3', pointerEvents: 'none', filter: 'grayscale(1)', borderRadius: '12px' } }, confidenceSlider)
+    : confidenceSlider;
   return createElement('div', { className: 'info-section' },
-    confidenceSlider,
+    confidenceWidget,
     createElement('div', { className: 'power-sequence stats-box' },
       createElement('h4', {}, 'First-Pitch Approach'),
       createElement('div', { className: 'power-sequence-text' }, firstPitchText)
@@ -508,7 +512,12 @@ class FlashcardApp {
     this.render();
   }
   toggleSettings() {
-    this.showSettingsPanel = !this.showSettingsPanel;
+    if (this.isSettingsDocked) {
+      this.isSettingsDocked = false;
+    } else {
+      this.isSettingsDocked = true;
+      this.showSettingsPanel = false;
+    }
     this.render();
   }
   toggleDock() {
@@ -1012,7 +1021,7 @@ createElement('div', {},
     return [...lineup].sort((a, b) => {
       let cmp = 0;
       if (this.sortBy === 'number') {
-        cmp = (a.battingOrder || 0) - (b.battingOrder || 0);
+        cmp = (a.jerseyNumber || 0) - (b.jerseyNumber || 0);
       } else if (this.sortBy === 'name') {
         cmp = (a.batter || '').localeCompare(b.batter || '');
       } else if (this.sortBy === 'handedness') {
@@ -1040,7 +1049,7 @@ createElement('div', {},
       );
     });
     const sortOptions = [
-      { value: 'number',   label: 'Estimated Batting Order' },
+      { value: 'number',   label: 'Default' },
       { value: 'name',     label: 'Name' },
       { value: 'handedness', label: 'Handedness' },
       { value: 'pitches', label: 'Total Pitches' },
@@ -1068,7 +1077,7 @@ createElement('div', {},
       createElement('div', { className: 'lineup-grid' }, ...cards)
     );
   }
-  renderSettingsPanel(rawCount = 0, filteredCount = 0, goodCount = 0, badCount = 0, docked = false) {
+  renderSettingsPanel(rawCount = 0, filteredCount = 0, goodCount = 0, badCount = 0, displayedCount = 0, displayedGoodCount = 0, displayedBadCount = 0, docked = false) {
     // Clamp current value into valid range [floor, sliderMax]
     const sliderMax = Math.max(1, CURRENT_SETTINGS.showAllZones ? rawCount : filteredCount);
     const floor = Math.min(DEFAULT_SETTINGS.maxPitchesDisplayed, sliderMax);
@@ -1140,8 +1149,8 @@ createElement('div', {},
       );
     };
     // Dock toggle row shown in the header
-    const dockToggleRow = createElement('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '10px', paddingTop: '10px', borderTop: '1px solid var(--border)' } },
-      createElement('span', { style: { fontSize: '13px', fontWeight: '600', color: 'var(--text)' } }, 'Dock to Sidebar'),
+    const dockToggleRow = createElement('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px', marginTop: '10px', paddingTop: '10px', borderTop: '1px solid var(--border)' } },
+      createElement('span', { style: { fontSize: '15px', fontWeight: '700', color: 'var(--text)' } }, 'Dock to Sidebar'),
       createElement('label', { className: 'toggle-switch' },
         createElement('input', {
           type: 'checkbox',
@@ -1163,10 +1172,10 @@ createElement('div', {},
             createElement('div', { className: 'settings-card__header' }, 'Pitch Display'),
             createElement('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '8px', justifyContent: 'center', marginBottom: '12px' } },
               ...[
-                { label: 'Total Pitches',                   value: rawCount,      bg: '#f1f5f9', border: '#cbd5e1', textColor: '#1e293b' },
-                { label: 'Matching Filters',                 value: filteredCount, bg: '#eff6ff', border: '#93c5fd', textColor: '#1d4ed8', tooltip: 'Pitches remaining after applying Pitch Type, Attack/Vulnerable, and Confidence filters.' },
-                { label: 'Attack Pitches (Strengths)',       value: goodCount,     bg: '#f0fdf4', border: '#86efac', textColor: '#15803d' },
-                { label: 'Vulnerable Pitches (Weaknesses)',  value: badCount,      bg: '#fef2f2', border: '#fca5a5', textColor: '#b91c1c' },
+                { label: 'Total Pitches',                   value: rawCount,         bg: '#f1f5f9', border: '#cbd5e1', textColor: '#1e293b' },
+                { label: 'Matching Filters',                 value: displayedCount,    bg: '#eff6ff', border: '#93c5fd', textColor: '#1d4ed8', tooltip: 'Pitches currently shown on the grid (limited by Max Pitches Displayed).' },
+                { label: 'Attack Pitches (Strengths)',       value: displayedGoodCount, bg: '#f0fdf4', border: '#86efac', textColor: '#15803d' },
+                { label: 'Vulnerable Pitches (Weaknesses)',  value: displayedBadCount,  bg: '#fef2f2', border: '#fca5a5', textColor: '#b91c1c' },
               ].map(({ label, value, bg, border, textColor, tooltip }) =>
                 createElement('div', { className: 'stat-pill', ...(tooltip ? { 'data-tooltip': tooltip } : {}), style: { display: 'inline-flex', flexDirection: 'column', alignItems: 'center', background: bg, border: `1px solid ${border}`, borderRadius: '10px', padding: '6px 14px', minWidth: '80px', position: 'relative' } },
                   createElement('span', { style: { fontSize: '18px', fontWeight: '800', color: textColor, lineHeight: '1.1' } }, value),
@@ -1179,7 +1188,8 @@ createElement('div', {},
             ),
             createSlider('Max Pitches Displayed', 'maxPitchesDisplayed', 1, CURRENT_SETTINGS.showAllZones ? rawCount : filteredCount, 1),
             createSlider('Pitch Circle Size (px)', 'pitchCircleSize', 32, 50, 1),
-            createCheckbox('Show All Zones (bypass filter)', 'showAllZones'),
+            createCheckbox('Show All Zones (Bypass Filter ⚠️)', 'showAllZones', 'toggle-yellow'),
+            createCheckbox('Show Pitcher Hand (L/R)', 'showPitcherHand'),
             createCheckbox('Show Only Attack Pitches', 'showOnlyGoodPitches', 'toggle-green'),
             createCheckbox('Show Only Vulnerable Pitches', 'showOnlyBadPitches', 'toggle-red')
           ),
@@ -1196,7 +1206,7 @@ createElement('div', {},
       createElement('div', { className: 'settings-modal__footer' },
         createElement('button', { className: 'settings-modal__reset-btn', onclick: () => this.resetSettings() }, 'Reset to Defaults'),
         docked
-          ? createElement('button', { className: 'settings-modal__close-btn', onclick: () => this.toggleDock() }, 'Undock')
+          ? createElement('button', { className: 'settings-modal__close-btn', onclick: () => { this.isSettingsDocked = false; this.render(); } }, 'Close')
           : createElement('button', { className: 'settings-modal__close-btn', onclick: () => this.toggleSettings() }, 'Close')
       )
     ];
@@ -1237,7 +1247,7 @@ createElement('div', {},
           createElement('button', {
             className: 'settings-btn',
             onclick: () => this.toggleSettings()
-          }, '⚙︎')
+          }, '⚙️')
         ),
         createElement('div', { className: 'header__controls' },
           createElement('span', { className: 'chip back-chip', onclick: () => this.showLineup(this.selectedTeam) }, '⮜ Lineup'),
@@ -1392,8 +1402,12 @@ createElement('div', {},
         const countSource = CURRENT_SETTINGS.showAllZones ? rawZones : fullyFilteredPitches;
         this._goodCount = countSource.filter(z => z.good === true).length;
         this._badCount = countSource.filter(z => z.good === false).length;
+        const displayedSlice = fullyFilteredPitches.slice(0, CURRENT_SETTINGS.maxPitchesDisplayed);
+        this._displayedCount = displayedSlice.length;
+        this._displayedGoodCount = displayedSlice.filter(z => z.good === true).length;
+        this._displayedBadCount = displayedSlice.filter(z => z.good === false).length;
       })(),
-      (!this.isSettingsDocked && this.showSettingsPanel) ? this.renderSettingsPanel(this._rawZoneCount, this._fullyFilteredPitches.length, this._goodCount, this._badCount) : null,
+      (!this.isSettingsDocked && this.showSettingsPanel) ? this.renderSettingsPanel(this._rawZoneCount, this._fullyFilteredPitches.length, this._goodCount, this._badCount, this._displayedCount, this._displayedGoodCount, this._displayedBadCount) : null,
       (() => {
         const { el: pitchZoneInner, count: renderedCount, available: availableCount } = createPitchZone(this._fullyFilteredPitches, data.handedness);
         const pitchZoneEl = createElement('div', { className: 'pitch-zone-section' }, pitchZoneInner);
@@ -1408,6 +1422,8 @@ createElement('div', {},
     );
   }
   render() {
+    // Save sidebar scroll before re-render
+    const _savedScroll = (this.container.querySelector('.settings-sidebar') || {}).scrollTop || 0;
     // Clean up existing sidebar and docked state
     document.getElementById('settings-sidebar')?.remove();
     this.container.classList.remove('app-sidebar-docked');
@@ -1424,10 +1440,12 @@ createElement('div', {},
 
     // After renderFlashcard has run (populating this._rawZoneCount etc.), mount sidebar
     if (this.isSettingsDocked && this.currentScreen === 'flashcard') {
-      const sidebar = this.renderSettingsPanel(this._rawZoneCount, this._fullyFilteredPitches.length, this._goodCount, this._badCount, true);
-      document.body.appendChild(sidebar);
+      const sidebar = this.renderSettingsPanel(this._rawZoneCount, this._fullyFilteredPitches.length, this._goodCount, this._badCount, this._displayedCount, this._displayedGoodCount, this._displayedBadCount, true);
+      this.container.insertBefore(sidebar, this.container.firstChild);
       this.container.classList.add('app-sidebar-docked');
     }
+    // Restore sidebar scroll position after layout is resolved
+    if (_savedScroll > 0) { requestAnimationFrame(() => { const _ns = this.container.querySelector('.settings-sidebar'); if (_ns) _ns.scrollTop = _savedScroll; }); }
   }
 }
 let app;
