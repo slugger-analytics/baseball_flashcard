@@ -381,7 +381,13 @@ const confidenceSlider = app ? createElement('div', { style: { padding: '16px', 
   // ------- CONFIDENCE SLIDER END -------
 
   const confidenceWidget = CURRENT_SETTINGS.showAllZones
-    ? createElement('div', { style: { opacity: '0.3', pointerEvents: 'none', filter: 'grayscale(1)', borderRadius: '12px' } }, confidenceSlider)
+    ? createElement('div', {
+        style: { position: 'relative', borderRadius: '12px', cursor: 'not-allowed' },
+        title: 'Weakness Confidence is disabled when the "Bypass Filter ⚠️" is ON'
+      },
+        createElement('div', { style: { opacity: '0.3', pointerEvents: 'none', filter: 'grayscale(1)' }, title: 'Weakness Confidence is disabled when the "Bypass Filter ⚠️" is ON' }, confidenceSlider),
+        createElement('span', { style: { position: 'absolute', top: '-6px', right: '-6px', fontSize: '14px', lineHeight: '1' }, title: 'Weakness Confidence is disabled when the "Bypass Filter ⚠️" is ON' }, '🔒')
+      )
     : confidenceSlider;
   return createElement('div', { className: 'info-section' },
     confidenceWidget,
@@ -1078,13 +1084,10 @@ createElement('div', {},
     );
   }
   renderSettingsPanel(rawCount = 0, filteredCount = 0, goodCount = 0, badCount = 0, displayedCount = 0, displayedGoodCount = 0, displayedBadCount = 0, statsTotalPitches = 0, docked = false) {
-    // Clamp current value into valid range [floor, sliderMax]
-    const sliderMax = Math.max(1, CURRENT_SETTINGS.showAllZones ? rawCount : filteredCount);
-    const floor = Math.min(DEFAULT_SETTINGS.maxPitchesDisplayed, sliderMax);
+    // Clamp down to sliderMax if the batter has fewer pitches than current setting
+    const sliderMax = CURRENT_SETTINGS.showAllZones ? rawCount : filteredCount;
     if (CURRENT_SETTINGS.maxPitchesDisplayed > sliderMax) {
       CURRENT_SETTINGS.maxPitchesDisplayed = sliderMax;
-    } else if (CURRENT_SETTINGS.maxPitchesDisplayed < floor) {
-      CURRENT_SETTINGS.maxPitchesDisplayed = floor;
     }
     const createSlider = (label, key, min, max, step = 1) => {
       return createElement('div', { className: 'setting-item' },
@@ -1172,7 +1175,7 @@ createElement('div', {},
             createElement('div', { className: 'settings-card__header' }, 'Pitch Display'),
             createElement('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '8px', justifyContent: 'center', marginBottom: '12px' } },
               ...[
-                { label: 'Total Pitches',                   value: statsTotalPitches || rawCount, bg: '#f1f5f9', border: '#cbd5e1', textColor: '#1e293b' },
+                { label: 'Total Pitches',                   value: rawCount, bg: '#f1f5f9', border: '#cbd5e1', textColor: '#1e293b' },
                 { label: 'Matching Filters',                 value: displayedCount,    bg: '#eff6ff', border: '#93c5fd', textColor: '#1d4ed8', tooltip: 'Pitches currently shown on the grid (limited by Max Pitches Displayed).' },
                 { label: 'Attack Pitches (Strengths)',       value: displayedGoodCount, bg: '#f0fdf4', border: '#86efac', textColor: '#15803d' },
                 { label: 'Vulnerable Pitches (Weaknesses)',  value: displayedBadCount,  bg: '#fef2f2', border: '#fca5a5', textColor: '#b91c1c' },
@@ -1186,9 +1189,27 @@ createElement('div', {},
                 )
               )
             ),
-            createSlider('Max Pitches Displayed', 'maxPitchesDisplayed', 1, CURRENT_SETTINGS.showAllZones ? rawCount : filteredCount, 1),
+            createSlider('Max Pitches Displayed', 'maxPitchesDisplayed', 0, CURRENT_SETTINGS.showAllZones ? rawCount : filteredCount, 1),
             createSlider('Pitch Circle Size (px)', 'pitchCircleSize', 32, 50, 1),
-            createCheckbox('Show All Zones (Bypass Filter ⚠️)', 'showAllZones', 'toggle-yellow'),
+            (() => {
+              const _bypassLocked = cachedDateRange.pitchGroup && cachedDateRange.pitchGroup !== 'All';
+              if (_bypassLocked && CURRENT_SETTINGS.showAllZones) CURRENT_SETTINGS.showAllZones = false;
+              if (!_bypassLocked) return createCheckbox('Show All Zones (Bypass Filter ⚠️)', 'showAllZones', 'toggle-yellow');
+              return createElement('div', {
+                className: 'setting-item',
+                title: 'Cannot show all zones while a pitch type filter (Fastballs, Breaking Balls, or Offspeed) is active',
+                style: { cursor: 'not-allowed' }
+              },
+                createElement('label', { className: 'setting-label', style: { opacity: '0.4' }, title: 'Cannot show all zones while a pitch type filter (Fastballs, Breaking Balls, or Offspeed) is active' }, 'Show All Zones (Bypass Filter ⚠️)'),
+                createElement('div', { style: { position: 'relative', display: 'inline-flex', alignItems: 'center' }, title: 'Cannot show all zones while a pitch type filter (Fastballs, Breaking Balls, or Offspeed) is active' },
+                  createElement('label', { className: 'toggle-switch', style: { opacity: '0.35', pointerEvents: 'none' }, title: 'Cannot show all zones while a pitch type filter (Fastballs, Breaking Balls, or Offspeed) is active' },
+                    createElement('input', { type: 'checkbox', checked: false, className: 'toggle-input', disabled: true }),
+                    createElement('span', { className: 'toggle-track toggle-yellow' })
+                  ),
+                  createElement('span', { style: { position: 'absolute', top: '-6px', right: '-8px', fontSize: '13px', lineHeight: '1' }, title: 'Cannot show all zones while a pitch type filter (Fastballs, Breaking Balls, or Offspeed) is active' }, '🔒')
+                )
+              );
+            })(),
             createCheckbox('Show Pitcher Hand (L/R)', 'showPitcherHand'),
             createCheckbox('Show Only Attack Pitches', 'showOnlyGoodPitches', 'toggle-green'),
             createCheckbox('Show Only Vulnerable Pitches', 'showOnlyBadPitches', 'toggle-red')
