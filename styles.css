@@ -1434,17 +1434,16 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
     grid-template-columns: 1fr;
     grid-template-rows: auto auto auto 1fr;
     width: 95vw;
-    min-width: 0;
     height: auto;
   }
-  .pitch-zone { width: 320px; height: 381px; }
+  .pitch-zone { width: 260px; height: 320px; }
   .batter-graphic { width: 60px; }
 }
 
 @media (max-width: 600px) {
-  .lineup-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
-  .widget { width: 100%; transform: none; border-radius: 12px; }
-  .pitch-zone { width: min(78vw, 300px); height: calc(min(78vw, 300px) * 1.19); }
+  .lineup-grid { grid-template-columns: 1fr; }
+  .widget { width: 95vw; transform: scaleX(0.70); transform-origin: center center; }
+  .pitch-zone { width: 280px; height: 280px; }
   .header__title .name { font-size: 20px; }
   .batter-graphic { width: 50px; }
 }
@@ -1555,13 +1554,6 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
 
   .pitch-zone {
     border: 3px solid #cbd5e1 !important;
-    background: #ffffff !important;
-    -webkit-print-color-adjust: exact !important;
-    print-color-adjust: exact !important;
-  }
-  .pitch-zone-section,
-  .pitch-zone-container {
-    background: #ffffff !important;
   }
 }
 
@@ -1615,156 +1607,4 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
   opacity: 0.8;
   cursor: help;
   font-size: 16px;
-}
-
-/* ── TABLET (max-width: 1024px) ── */
-@media (max-width: 1024px) {
-  .widget {
-    width: 95vw;
-    min-width: 0;
-  }
-  .team-grid {
-    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  }
-  .lineup-grid {
-    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  }
-}
-
-/* ── MOBILE (max-width: 768px) ── */
-@media (max-width: 768px) {
-  #app {
-    padding: 8px;
-    align-items: flex-start;
-  }
-
-  /* Widget: fully stacked, no overflow */
-  .widget {
-    grid-template-areas: "header" "pitch" "info";
-    grid-template-columns: 1fr;
-    grid-template-rows: auto auto 1fr;
-    width: 100%;
-    min-width: 0;
-    height: auto;
-    border-radius: 12px;
-    transform: none !important;
-  }
-
-  /* Header */
-  .header {
-    padding: 10px 12px;
-    gap: 6px;
-  }
-  .header__title .name { font-size: 20px; }
-  .header__title .meta { font-size: 13px; }
-  .header__controls { gap: 6px; }
-
-  /* Pitch zone: proportional scaling, no overflow */
-  .pitch-zone-section {
-    padding: 10px 6px;
-    justify-content: center;
-  }
-  .pitch-zone-container {
-    justify-content: center;
-    gap: 4px;
-  }
-  .pitch-zone {
-    width: min(78vw, 300px);
-    height: calc(min(78vw, 300px) * 1.19);
-  }
-  .batter-graphic {
-    width: 48px;
-    height: auto;
-  }
-
-  /* Info section scrollable */
-  .info-section {
-    border-left: none;
-    border-top: 1px solid var(--border);
-    max-height: none;
-  }
-
-  /* Stat pills: 2×2 grid on mobile */
-  .stat-pills-container {
-    display: grid !important;
-    grid-template-columns: 1fr 1fr !important;
-    gap: 8px !important;
-  }
-
-  /* Team & roster cards: fluid 2-column */
-  .team-grid {
-    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-    gap: 12px;
-    padding: 0 4px;
-  }
-  .lineup-grid {
-    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-    gap: 10px;
-  }
-
-  /* Sidebar docked: stack below widget */
-  .app-sidebar-docked {
-    flex-direction: column;
-    align-items: stretch;
-    padding: 8px;
-    gap: 8px;
-  }
-  .app-sidebar-docked .settings-sidebar {
-    position: static;
-    height: auto;
-    max-height: 60vh;
-    width: 100%;
-    order: 2;
-  }
-  .app-sidebar-docked .widget {
-    width: 100%;
-  }
-
-  /* Touch targets ≥ 44px */
-  .chip, .back-btn, .print-btn, .team-btn {
-    min-height: 44px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .info-btn, .settings-btn {
-    width: 44px;
-    height: 44px;
-    font-size: 18px;
-  }
-  .pitch-filter-btn {
-    min-height: 44px;
-    padding: 10px 10px;
-    min-width: 0;
-  }
-
-  /* Team select screen */
-  .team-select-screen {
-    padding: 20px 12px;
-  }
-  .team-select-screen h1,
-  .lineup-header h1 {
-    font-size: 34px;
-  }
-
-  /* Lineup header: let it wrap naturally */
-  .lineup-header {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    margin-bottom: 16px;
-  }
-  .lineup-header .back-btn,
-  .lineup-header .print-btn {
-    position: static;
-    transform: none;
-  }
-  .lineup-header h1 {
-    font-size: 22px;
-    margin: 0;
-    width: 100%;
-    text-align: center;
-  }
 }

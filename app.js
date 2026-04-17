@@ -1173,7 +1173,7 @@ createElement('div', {},
           // Pitch Display — full width
           createElement('div', { className: 'settings-card full-width' },
             createElement('div', { className: 'settings-card__header' }, 'Pitch Display'),
-            createElement('div', { className: 'stat-pills-container', style: { display: 'flex', flexWrap: 'wrap', gap: '8px', justifyContent: 'center', marginBottom: '12px' } },
+            createElement('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '8px', justifyContent: 'center', marginBottom: '12px' } },
               ...[
                 { label: 'Total Pitches',                   value: rawCount, bg: '#f1f5f9', border: '#cbd5e1', textColor: '#1e293b' },
                 { label: 'Matching Filters',                 value: displayedCount,    bg: '#eff6ff', border: '#93c5fd', textColor: '#1d4ed8', tooltip: 'Pitches currently shown on the grid (limited by Max Pitches Displayed).' },
