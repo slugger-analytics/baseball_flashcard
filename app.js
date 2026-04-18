@@ -834,7 +834,18 @@ try {
               // Create the info icon with the fully spelled out pitch types in the tooltip
               const icon = hasIcon ? createElement('span', {
                 className: 'pitch-info-icon',
-                title: tooltipText
+                title: tooltipText,
+                onclick: (e) => {
+                  e.stopPropagation();
+                  let tip = document.getElementById('mobile-pitch-tip');
+                  if (tip) { tip.remove(); return; }
+                  tip = document.createElement('div');
+                  tip.id = 'mobile-pitch-tip';
+                  tip.textContent = tooltipText;
+                  Object.assign(tip.style, { position: 'fixed', background: '#1e293b', color: '#f8fafc', fontSize: '13px', padding: '8px 12px', borderRadius: '8px', zIndex: '9999', maxWidth: '240px', boxShadow: '0 4px 12px rgba(0,0,0,0.3)', top: (e.clientY - 60) + 'px', left: Math.min(e.clientX - 60, window.innerWidth - 260) + 'px' });
+                  document.body.appendChild(tip);
+                  setTimeout(() => tip && tip.remove(), 3000);
+                }
               }, 'ⓘ') : null;
 
               // Create the individual button
