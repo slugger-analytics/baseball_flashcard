@@ -1516,91 +1516,105 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
 }
 
 @media print {
-  /* Force white background on ALL elements - crucial for mobile */
-  * {
-    -webkit-print-color-adjust: exact !important;
-    print-color-adjust: exact !important;
-    color-adjust: exact !important;
-  }
+  /* Keep existing print styles, then add/override these: */
   
-  /* Force light color scheme - prevents dark mode on mobile */
-  :root {
-    color-scheme: light !important;
-  }
-  
-  /* Override any dark mode preferences */
-  @media (prefers-color-scheme: dark) {
-    html, body, #app, .widget, .pitch-zone, .info-section {
-      background: white !important;
-      color: black !important;
-    }
-  }
-  
-  /* Remove any background colors that might turn black */
-  body, #app, .container, .widget, .pitch-zone, 
-  .info-section, .tendencies, .power-sequence {
-    background: white !important;
-    background-color: white !important;
-  }
-  
-  /* Force black text */
-  body, #app, .name, .meta, .tendency-value, .threat-value {
-    color: black !important;
-  }
-  
-  /* Keep your layout */
-  body {
-    margin: 0;
-    padding: 0;
-    background: white !important;
-  }
-  
-  #app {
-    display: block !important;
-  }
-  
-  #print-container, #lineup-print-container {
-    display: none !important;
-  }
-  
-  /* Preserve your mobile layout */
-  .widget {
-    grid-template-areas: "header" "pitch" "info";
-    grid-template-columns: 1fr;
+  /* Force 3-column layout on print */
+  .print-widget {
+    display: grid !important;
+    grid-template-areas: "graphic pitch info" !important;
+    grid-template-columns: auto 1.5fr 0.6fr !important;  /* grid gets biggest */
+    grid-template-rows: auto !important;
+    gap: 16px !important;
     width: 100% !important;
-    background: white !important;
+    max-width: none !important;
+    align-items: start !important;
   }
   
-  .pitch-zone {
-    width: min(80vw, 400px) !important;
+  /* Show batter graphic in print */
+  .print-widget .batter-graphic-section {
+    display: flex !important;
+    grid-area: graphic !important;
+    align-items: center !important;
+    justify-content: center !important;
+    padding: 10px !important;
+  }
+  
+  .print-widget .batter-graphic {
+    display: block !important;
+    width: 100px !important;
     height: auto !important;
+  }
+  
+  .print-widget .batter-graphic img {
+    width: 100% !important;
+    height: auto !important;
+  }
+  
+  /* Pitch zone - middle and largest */
+  .print-widget .pitch-zone-section {
+    grid-area: pitch !important;
+    display: flex !important;
+    justify-content: center !important;
+    align-items: center !important;
+    padding: 10px !important;
+  }
+  
+  .print-widget .pitch-zone {
+    width: 450px !important;
+    height: 450px !important;
     margin: 0 auto !important;
   }
   
-  /* Ensure pitch circles print with colors */
-  .pitch-circle--good {
-    background: #10b981 !important;
-    color: white !important;
+  /* Info section - right column */
+  .print-widget .info-section {
+    grid-area: info !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 12px !important;
+    padding: 10px !important;
+    border-left: 1px solid #ccc !important;
+    border-top: none !important;
   }
   
-  .pitch-circle--bad {
-    background: #ef4444 !important;
-    color: white !important;
-  }
-  
-  /* Hide interactive elements */
-  .header__controls, .info-btn, .settings-btn,
-  .chip, .back-btn, .print-btn {
+  /* Hide the header in print (or keep minimal) */
+  .print-widget .header {
     display: none !important;
   }
   
-  /* Scale to fit page */
-  body {
-    transform: scale(0.95);
-    transform-origin: top center;
+  /* Adjust pitch circles size for print */
+  .print-widget .pitch-circle {
+    --pitch-circle-size: 28px !important;
+  }
+  
+  /* Keep info section content readable */
+  .print-widget .tendencies, 
+  .print-widget .power-sequence {
+    padding: 8px !important;
+    margin: 0 !important;
+  }
+  
+  .print-widget .tendency-label,
+  .print-widget .threat-label {
+    font-size: 10px !important;
+  }
+  
+  .print-widget .tendency-value,
+  .print-widget .threat-value {
+    font-size: 11px !important;
+  }
+  
+  .print-widget .power-sequence-text {
+    font-size: 11px !important;
+  }
+  
+  /* Ensure white background on everything */
+  .print-widget,
+  .print-widget .pitch-zone-section,
+  .print-widget .info-section,
+  .print-widget .batter-graphic-section {
+    background: white !important;
   }
 }
-
 
 .team-btn:hover {
   transform: translateY(-4px);
