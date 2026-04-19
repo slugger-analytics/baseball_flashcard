@@ -1572,6 +1572,24 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
     background: #ffffff !important;
   }
 
+  /* ── Re-assert 2-column grid — 768px mobile query fires on letter paper
+       (8.5" at 96dpi ≈ 816px minus margins ≈ 768px) and beats the static
+       .print-widget rules because it sits later in the file; !important wins ── */
+  .print-widget {
+    display: grid !important;
+    grid-template-areas: "header header" "pitch info" !important;
+    grid-template-columns: 1.7fr 0.6fr !important;
+    grid-template-rows: auto auto !important;
+    min-height: 0 !important;
+    height: auto !important;
+    transform: none !important;
+    border-radius: 12px !important;
+  }
+  .print-widget .info-section {
+    border-left: 1px solid #e2e8f0 !important;
+    border-top: none !important;
+  }
+
   /* ── Visual Hierarchy: Header large, Grid dominant, Info compact ────── */
 
   /* Header — solid black text (gradient doesn't reproduce on paper), larger */
