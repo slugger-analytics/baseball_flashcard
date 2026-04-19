@@ -1475,9 +1475,9 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
   width: 1100px !important;
   height: auto;
   min-height: 0 !important;
-  grid-template-areas: "header header" "pitch info";
-  grid-template-columns: 1.7fr 0.6fr;
-  grid-template-rows: auto auto;
+  grid-template-areas: "header" "pitch" "info";
+  grid-template-columns: 1fr;
+  grid-template-rows: auto auto auto;
   border: none;
   box-shadow: none;
   box-sizing: border-box;
@@ -1506,10 +1506,10 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
   object-fit: contain;
 }
 
-/* 3. Grid: large and dominant — wider, taller */
+/* 3. Grid: large and dominant — full width, centered */
 .print-widget .pitch-zone {
-  width: 90% !important;
-  height: 520px !important;
+  width: 580px !important;
+  height: 580px !important;
   flex-shrink: 0 !important;
   margin: 0 auto !important;
 }
@@ -1572,22 +1572,28 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
     background: #ffffff !important;
   }
 
-  /* ── Re-assert 2-column grid — 768px mobile query fires on letter paper
-       (8.5" at 96dpi ≈ 816px minus margins ≈ 768px) and beats the static
-       .print-widget rules because it sits later in the file; !important wins ── */
+  /* ── Single-column stacked layout: header → pitch (full width) → info row below ── */
   .print-widget {
     display: grid !important;
-    grid-template-areas: "header header" "pitch info" !important;
-    grid-template-columns: 1.7fr 0.6fr !important;
-    grid-template-rows: auto auto !important;
+    grid-template-areas: "header" "pitch" "info" !important;
+    grid-template-columns: 1fr !important;
+    grid-template-rows: auto auto auto !important;
     min-height: 0 !important;
     height: auto !important;
     transform: none !important;
     border-radius: 12px !important;
   }
   .print-widget .info-section {
-    border-left: 1px solid #e2e8f0 !important;
-    border-top: none !important;
+    display: flex !important;
+    flex-direction: row !important;
+    flex-wrap: wrap !important;
+    gap: 8px !important;
+    border-left: none !important;
+    border-top: 1px solid #e2e8f0 !important;
+    padding: 10px !important;
+  }
+  .print-widget .info-section > div:not(:first-child) {
+    flex: 1 1 200px !important;
   }
 
   /* ── Visual Hierarchy: Header large, Grid dominant, Info compact ────── */
@@ -1619,10 +1625,11 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
     padding: 3px 10px !important;
   }
 
-  /* Pitch section — start at top of row, no dead vertical centering */
+  /* Pitch section — centered, full width */
   .print-widget .pitch-zone-section {
     padding: 8px 0 !important;
-    align-items: flex-start !important;
+    align-items: center !important;
+    justify-content: center !important;
   }
 
   /* Info section — secondary, compact */

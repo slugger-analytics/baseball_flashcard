@@ -176,19 +176,14 @@ async function fetchPitchesByDateRange(startDateStr, endDateStr) {
   const cacheFile = path.join(cacheDir, `cache_${startDateStr}_${endDateStr}.json`);
 
   if (fs.existsSync(cacheFile)) {
-    console.log(`💾 Disk cache hit: streaming ${cacheFile}`);
-    const streamJsonDir = path.dirname(require.resolve('stream-json'));
-    const streamArray = require(path.join(streamJsonDir, 'streamers', 'stream-array.js'));
-    const filtered = await new Promise((resolve, reject) => {
-      const items = [];
-      const pipeline = streamArray.withParserAsStream();
-      pipeline.on('data', ({ value }) => items.push(value));
-      pipeline.on('finish', () => resolve(items));
-      pipeline.on('error', reject);
-      fs.createReadStream(cacheFile).pipe(pipeline);
-    });
-    console.log(`💾 Disk cache loaded: ${filtered.length} pitches`);
-    return filtered;
+    try {
+      console.log(`💾 Disk cache hit: ${cacheFile}`);
+      const filtered = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
+      console.log(`💾 Disk cache loaded: ${filtered.length} pitches`);
+      return filtered;
+    } catch (e) {
+      console.log(`💾 Cache read failed (${e.message}), fetching from API...`);
+    }
   }
 
     console.log(`Fetching date range from SLUGGER API: ${startDateStr} to ${endDateStr}`);
