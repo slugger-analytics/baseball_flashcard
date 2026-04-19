@@ -875,11 +875,12 @@ try {
           createElement('label', { style: { display: 'block', 'margin-bottom': '15px', 'font-weight': 'bold', 'font-size': '16px' } }, 
             'Custom Date Range'
           ),
-          createElement('div', { style: { display: 'flex', gap: '15px', marginBottom: '15px' } },
+          createElement('div', { className: 'date-inputs-row' },
             createElement('div', { style: { flex: 1 } },
               createElement('label', { style: { display: 'block', fontSize: '12px', marginBottom: '5px', color: '#666' } }, 'Start Date'),
               createElement('input', {
-                id: 'startDate', type: 'date',
+                id: 'startDate', type: 'text',
+                placeholder: 'YYYY-MM-DD',
                 value: this.lastStartDate || '',
                 style: { width: '100%', padding: '10px', borderRadius: '4px', border: '1px solid #ccc', cursor: 'pointer' }
               })
@@ -887,7 +888,8 @@ try {
             createElement('div', { style: { flex: 1 } },
               createElement('label', { style: { display: 'block', fontSize: '12px', marginBottom: '5px', color: '#666' } }, 'End Date'),
               createElement('input', {
-                id: 'endDate', type: 'date',
+                id: 'endDate', type: 'text',
+                placeholder: 'YYYY-MM-DD',
                 value: this.lastEndDate || '',
                 style: { width: '100%', padding: '10px', borderRadius: '4px', border: '1px solid #ccc', cursor: 'pointer' }
               })
@@ -1467,6 +1469,7 @@ createElement('div', {},
     );
   }
   render() {
+    if (this.currentScreen === 'loading' || this.currentScreen === 'error') window.scrollTo(0, 0);
     // Save sidebar scroll before re-render
     const _savedScroll = (this.container.querySelector('.settings-sidebar') || {}).scrollTop || 0;
     // Clean up existing sidebar and docked state

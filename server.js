@@ -171,8 +171,8 @@ function getTeamName(code) {
  * @returns {Promise<Array>} Array of raw pitch objects, or empty array on error.
  */
 async function fetchPitchesByDateRange(startDateStr, endDateStr) {
-  const cacheDir = path.join(__dirname, 'cache');
-  if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir);
+  const cacheDir = process.env.VERCEL ? '/tmp/cache' : path.join(__dirname, 'cache');
+  if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
   const cacheFile = path.join(cacheDir, `cache_${startDateStr}_${endDateStr}.json`);
 
   if (fs.existsSync(cacheFile)) {

@@ -1724,6 +1724,12 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
   font-size: 16px;
 }
 
+.date-inputs-row {
+  display: flex;
+  gap: 15px;
+  margin-bottom: 15px;
+}
+
 /* ── TABLET (max-width: 1024px) ── */
 @media (max-width: 1024px) {
   .widget {
@@ -1846,6 +1852,11 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
     min-height: 44px;
     padding: 10px 10px;
     min-width: 0;
+    flex: 0 1 calc(50% - 5px);
+  }
+
+  .date-inputs-row {
+    flex-direction: column !important;
   }
 
   /* Team select screen */
