@@ -604,6 +604,7 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+  justify-content: center;
 }
 
 .chip {
@@ -799,10 +800,10 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
 }
 
 .info-btn, .settings-btn {
-  background: #bfdbfe;
+  background: #93c5fd;
   color: #1e40af;
   border: none;
-  border-radius: 50%;
+  border-radius: 12px;
   width: 36px;
   height: 36px;
   font-size: 16px;
@@ -817,7 +818,7 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
   box-shadow: var(--shadow-md);
 }
 
-.settings-btn { background: #64748b; color: #ffffff; }
+.settings-btn { background: #fb923c; color: #ffffff; }
 
 /* Information & Tendencies Cards */
 .tendencies, .power-sequence {
@@ -1548,10 +1549,11 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
     print-color-adjust: exact !important;
   }
 
-  /* Darker grid lines for print legibility */
+  /* Darker grid lines for print legibility; transparent bg stops iOS Safari black fill */
   .pitch-zone::after {
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
+    background-color: transparent !important;
     background-image:
       linear-gradient(to right, transparent calc(33.333% - 1px), #94a3b8 calc(33.333% - 1px), #94a3b8 calc(33.333% + 1px), transparent calc(33.333% + 1px)),
       linear-gradient(to right, transparent calc(66.666% - 1px), #94a3b8 calc(66.666% - 1px), #94a3b8 calc(66.666% + 1px), transparent calc(66.666% + 1px)),
@@ -1562,6 +1564,8 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
   .pitch-zone {
     border: 3px solid #cbd5e1 !important;
     background: #ffffff !important;
+    background-color: #ffffff !important;
+    color-scheme: light !important;
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
   }
@@ -1569,8 +1573,13 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
   .pitch-zone-container,
   .print-page,
   .print-widget {
-    background: #ffffff !important;
+    background-color: #ffffff !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
   }
+  /* Pitch circles keep their colors */
+  .print-widget .pitch-circle--good { background-color: #10b981 !important; color: #ffffff !important; }
+  .print-widget .pitch-circle--bad  { background-color: #ef4444 !important; color: #ffffff !important; }
 
   /* ── Single-column stacked layout: header → pitch (full width) → info row below ── */
   .print-widget {
@@ -1874,12 +1883,27 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
     overflow-x: hidden;
     box-sizing: border-box;
   }
-  .team-select-screen h1,
-  .lineup-header h1 {
-    font-size: 34px;
+  .team-select-screen h1 {
+    font-size: 44px;
   }
 
-  /* Lineup header: let it wrap naturally */
+  /* Loading screen: center vertically */
+  .loading-screen {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: center !important;
+    min-height: 80vh !important;
+    text-align: center !important;
+  }
+
+  /* Lineup: prevent overflow */
+  .lineup-screen {
+    overflow-x: hidden;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 16px;
+  }
   .lineup-header {
     display: flex;
     flex-wrap: wrap;
@@ -1894,9 +1918,37 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
     transform: none;
   }
   .lineup-header h1 {
-    font-size: 22px;
+    font-size: 20px;
     margin: 0;
-    width: 100%;
+    flex: 0 0 100%;
     text-align: center;
+    word-break: break-word;
+  }
+
+  /* Settings sidebar → centered modal overlay on mobile */
+  .app-sidebar-docked::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 999;
+  }
+  .app-sidebar-docked .settings-sidebar {
+    position: fixed !important;
+    top: 50% !important;
+    left: 50% !important;
+    transform: translate(-50%, -50%) !important;
+    width: 92vw !important;
+    max-height: 82vh !important;
+    overflow-y: auto !important;
+    z-index: 1000 !important;
+    border-radius: 16px !important;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4) !important;
+    height: auto !important;
+  }
+
+  /* Header title + controls centering */
+  .header__title {
+    justify-content: center !important;
   }
 }

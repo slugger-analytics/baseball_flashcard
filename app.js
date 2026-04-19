@@ -878,21 +878,57 @@ try {
           createElement('div', { className: 'date-inputs-row' },
             createElement('div', { style: { flex: 1 } },
               createElement('label', { style: { display: 'block', fontSize: '12px', marginBottom: '5px', color: '#666' } }, 'Start Date'),
+              createElement('div', { style: { display: 'flex', gap: '6px', alignItems: 'center' } },
               createElement('input', {
                 id: 'startDate', type: 'text',
                 placeholder: 'YYYY-MM-DD',
                 value: this.lastStartDate || '',
-                style: { width: '100%', padding: '10px', borderRadius: '4px', border: '1px solid #ccc', cursor: 'pointer' }
-              })
+                style: { flex: 1, padding: '10px', borderRadius: '4px', border: '1px solid #ccc', cursor: 'text', minWidth: 0 }
+              }),
+              createElement('button', {
+                type: 'button',
+                title: 'Open calendar',
+                style: { padding: '8px 10px', border: '1px solid #ccc', borderRadius: '4px', background: 'white', cursor: 'pointer', fontSize: '16px', flexShrink: 0 },
+                onclick: () => {
+                  const picker = document.createElement('input');
+                  picker.type = 'date';
+                  picker.style.cssText = 'position:fixed;opacity:0;pointer-events:none;top:0;left:0;';
+                  const cur = document.getElementById('startDate').value;
+                  if (cur && /^\d{4}-\d{2}-\d{2}$/.test(cur)) picker.value = cur;
+                  document.body.appendChild(picker);
+                  picker.addEventListener('change', () => { document.getElementById('startDate').value = picker.value; picker.remove(); });
+                  picker.addEventListener('blur', () => setTimeout(() => picker.remove(), 200));
+                  picker.showPicker ? picker.showPicker() : picker.click();
+                }
+              }, '📅')
+            )
             ),
             createElement('div', { style: { flex: 1 } },
               createElement('label', { style: { display: 'block', fontSize: '12px', marginBottom: '5px', color: '#666' } }, 'End Date'),
+              createElement('div', { style: { display: 'flex', gap: '6px', alignItems: 'center' } },
               createElement('input', {
                 id: 'endDate', type: 'text',
                 placeholder: 'YYYY-MM-DD',
                 value: this.lastEndDate || '',
-                style: { width: '100%', padding: '10px', borderRadius: '4px', border: '1px solid #ccc', cursor: 'pointer' }
-              })
+                style: { flex: 1, padding: '10px', borderRadius: '4px', border: '1px solid #ccc', cursor: 'text', minWidth: 0 }
+              }),
+              createElement('button', {
+                type: 'button',
+                title: 'Open calendar',
+                style: { padding: '8px 10px', border: '1px solid #ccc', borderRadius: '4px', background: 'white', cursor: 'pointer', fontSize: '16px', flexShrink: 0 },
+                onclick: () => {
+                  const picker = document.createElement('input');
+                  picker.type = 'date';
+                  picker.style.cssText = 'position:fixed;opacity:0;pointer-events:none;top:0;left:0;';
+                  const cur = document.getElementById('endDate').value;
+                  if (cur && /^\d{4}-\d{2}-\d{2}$/.test(cur)) picker.value = cur;
+                  document.body.appendChild(picker);
+                  picker.addEventListener('change', () => { document.getElementById('endDate').value = picker.value; picker.remove(); });
+                  picker.addEventListener('blur', () => setTimeout(() => picker.remove(), 200));
+                  picker.showPicker ? picker.showPicker() : picker.click();
+                }
+              }, '📅')
+            )
             )
           ),
           createElement('button', {
@@ -1292,7 +1328,7 @@ createElement('div', {},
           createElement('button', {
             className: 'settings-btn',
             onclick: () => this.toggleSettings()
-          }, '⚙️')
+          }, '🛠️')
         ),
         //test for fork
         createElement('div', { className: 'header__controls' },
@@ -1386,7 +1422,7 @@ createElement('div', {},
 
             // Weakness Confidence
             createElement('div', { className: 'info-entry' },
-              createElement('div', { className: 'info-entry__icon', style: { background: '#d1fae5' } }, '🎚️'),
+              createElement('div', { className: 'info-entry__icon', style: { background: 'linear-gradient(to right, #ef4444 33%, #facc15 33% 66%, #22c55e 66%)', padding: '0', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', color: 'white', fontWeight: '800', letterSpacing: '1px' } }, '●●●'),
               createElement('div', { className: 'info-entry__content' },
                 createElement('div', { className: 'info-entry__title' }, 'Weakness Confidence'),
                 createElement('div', { className: 'info-entry__desc' },
@@ -1419,7 +1455,7 @@ createElement('div', {},
 
             // First Pitch
             createElement('div', { className: 'info-entry info-entry--last' },
-              createElement('div', { className: 'info-entry__icon', style: { background: '#dcfce7' } }, '🟢'),
+              createElement('div', { className: 'info-entry__icon', style: { background: '#dbeafe' } }, '🔵'),
               createElement('div', { className: 'info-entry__content' },
                 createElement('div', { className: 'info-entry__title' }, 'First-Pitch Approach'),
                 createElement('div', { className: 'info-entry__desc' },
