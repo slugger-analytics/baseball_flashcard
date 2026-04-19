@@ -161,6 +161,9 @@ function getTeamName(code) {
 }
 
 
+// Add this at the top of your file after the other constants (around line 170)
+const pitchCache = new Map();
+
 /**
  * Fetches all pitch records for a date range from the SLUGGER API, with in-memory caching.
  * @param {string} startDateStr - Start date in YYYY-MM-DD format.
@@ -168,19 +171,12 @@ function getTeamName(code) {
  * @returns {Promise<Array>} Array of raw pitch objects, or empty array on error.
  */
 async function fetchPitchesByDateRange(startDateStr, endDateStr) {
-  const cacheDir = process.env.VERCEL ? '/tmp/cache' : path.join(__dirname, 'cache');
-  if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
-  const cacheFile = path.join(cacheDir, `cache_${startDateStr}_${endDateStr}.json`);
-
-  if (fs.existsSync(cacheFile)) {
-    try {
-      console.log(`Disk cache hit: ${cacheFile}`);
-      const filtered = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
-      console.log(`Disk cache loaded: ${filtered.length} pitches`);
-      return filtered;
-    } catch (e) {
-      console.log(`Cache read failed (${e.message}), fetching from API...`);
-    }
+  const cacheKey = `${startDateStr}_${endDateStr}`;
+  
+  // Check memory cache first
+  if (pitchCache.has(cacheKey)) {
+    console.log(`💾 Memory cache hit: ${cacheKey}`);
+    return pitchCache.get(cacheKey);
   }
 
   console.log(`Fetching date range from SLUGGER API: ${startDateStr} to ${endDateStr}`);
@@ -202,12 +198,12 @@ async function fetchPitchesByDateRange(startDateStr, endDateStr) {
     
     console.log(`✅ After date filter (${startDateStr} → ${endDateStr}): ${filtered.length} pitches`);
 
-    // Store in memory cache instead of disk
+    // Store in memory cache
     pitchCache.set(cacheKey, filtered);
-    console.log(`Memory cache stored: ${cacheKey} (${filtered.length} pitches)`);
+    console.log(`💾 Memory cache stored: ${cacheKey} (${filtered.length} pitches)`);
 
-    // Optional: Limit cache size to prevent memory issues
-    if (pitchCache.size > 50) {
+    // Limit cache size to prevent memory issues (keep last 20 ranges)
+    if (pitchCache.size > 20) {
       const firstKey = pitchCache.keys().next().value;
       pitchCache.delete(firstKey);
       console.log(`🗑️  Cache limit reached, removed oldest entry: ${firstKey}`);
