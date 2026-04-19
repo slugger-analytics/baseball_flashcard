@@ -3,8 +3,6 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
-const fs = require('fs');
-const path = require('path');
 
 const app = express();
 app.use(cors());
@@ -163,71 +161,59 @@ function getTeamName(code) {
 }
 
 
-
 /**
  * Fetches all pitch records for a date range from the SLUGGER API, with in-memory caching.
  * @param {string} startDateStr - Start date in YYYY-MM-DD format.
  * @param {string} endDateStr - End date in YYYY-MM-DD format.
  * @returns {Promise<Array>} Array of raw pitch objects, or empty array on error.
  */
-async function fetchPitchesByDateRange(startDateStr, endDateStr) {
-  const cacheDir = path.join(__dirname, 'cache');
-  if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir);
-  const cacheFile = path.join(cacheDir, `cache_${startDateStr}_${endDateStr}.json`);
+const pitchCache = new Map();
 
-  if (fs.existsSync(cacheFile)) {
-    console.log(`💾 Disk cache hit: streaming ${cacheFile}`);
-    const streamJsonDir = path.dirname(require.resolve('stream-json'));
-    const streamArray = require(path.join(streamJsonDir, 'streamers', 'stream-array.js'));
-    const filtered = await new Promise((resolve, reject) => {
-      const items = [];
-      const pipeline = streamArray.withParserAsStream();
-      pipeline.on('data', ({ value }) => items.push(value));
-      pipeline.on('finish', () => resolve(items));
-      pipeline.on('error', reject);
-      fs.createReadStream(cacheFile).pipe(pipeline);
-    });
-    console.log(`💾 Disk cache loaded: ${filtered.length} pitches`);
-    return filtered;
+async function fetchPitchesByDateRange(startDateStr, endDateStr) {
+  const cacheKey = `${startDateStr}_${endDateStr}`;
+  
+  // Check memory cache first
+  if (pitchCache.has(cacheKey)) {
+    console.log(`💾 Memory cache hit: ${cacheKey}`);
+    return pitchCache.get(cacheKey);
   }
 
-    console.log(`Fetching date range from SLUGGER API: ${startDateStr} to ${endDateStr}`);
+  console.log(`Fetching date range from SLUGGER API: ${startDateStr} to ${endDateStr}`);
 
-    try {
-        // This uses the legacy helper to automatically handle pagination if there are >1000 pitches!
-        const pitches = await fetchAllPages('/pitches', {
-            date_range_start: startDateStr,
-            date_range_end: endDateStr
-        });
+  try {
+    // Fetch all pitches using your existing pagination helper
+    const pitches = await fetchAllPages('/pitches', {
+      date_range_start: startDateStr,
+      date_range_end: endDateStr
+    });
 
-        console.log(`✅ Success: Fetched ${pitches.length} pitches from API`);
+    console.log(`✅ Success: Fetched ${pitches.length} pitches from API`);
 
-        const filtered = pitches.filter(p => {
-          const d = (p.date || '').slice(0, 10);
-          return d >= startDateStr && d <= endDateStr;
-        });
-        console.log(`✅ After date filter (${startDateStr} → ${endDateStr}): ${filtered.length} pitches`);
+    // Filter by date range
+    const filtered = pitches.filter(p => {
+      const d = (p.date || '').slice(0, 10);
+      return d >= startDateStr && d <= endDateStr;
+    });
+    
+    console.log(`✅ After date filter (${startDateStr} → ${endDateStr}): ${filtered.length} pitches`);
 
-        await new Promise((resolve, reject) => {
-          const stream = fs.createWriteStream(cacheFile);
-          stream.on('error', reject);
-          stream.on('finish', resolve);
-          stream.write('[');
-          for (let i = 0; i < filtered.length; i++) {
-            stream.write(JSON.stringify(filtered[i]));
-            if (i < filtered.length - 1) stream.write(',');
-          }
-          stream.write(']');
-          stream.end();
-        });
-        console.log(`💾 Disk cache written: ${cacheFile}`);
+    // Store in memory cache instead of disk
+    pitchCache.set(cacheKey, filtered);
+    console.log(`💾 Memory cache stored: ${cacheKey} (${filtered.length} pitches)`);
 
-        return filtered;
-
-    } catch (error) {
-        console.error("❌ Error fetching from SLUGGER API:", error);
-        return [];
+    // Optional: Limit cache size to prevent memory issues
+    if (pitchCache.size > 50) {
+      const firstKey = pitchCache.keys().next().value;
+      pitchCache.delete(firstKey);
+      console.log(`🗑️  Cache limit reached, removed oldest entry: ${firstKey}`);
     }
+
+    return filtered;
+
+  } catch (error) {
+    console.error("❌ Error fetching from SLUGGER API:", error);
+    return [];
+  }
 }
 
 /**
