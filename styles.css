@@ -1552,7 +1552,7 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
 }
 
 @media print {
-  /* THE MAGIC iOS BLACK BACKGROUND FIX */
+  /* 1. iOS DARK MODE OVERRIDE */
   :root { color-scheme: light !important; }
 
   html, body { 
@@ -1566,7 +1566,7 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
     print-color-adjust: exact !important;
   }
 
-  /* Safe hide for iOS - prevents viewport freezing */
+  /* Keep the main app hidden to prevent viewport freezing, but DO NOT use display:none */
   #app { 
     position: absolute !important;
     visibility: hidden !important; 
@@ -1576,26 +1576,29 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
     z-index: -999 !important;
   }
 
-  /* Bring the print containers back onto the page for the PDF */
+  /* 2. FIX THE 1-PAGE LINEUP CUTOFF */
   #print-container, #lineup-print-container {
     position: relative !important;
     left: 0 !important;
     top: 0 !important;
     width: 100% !important;
-    height: auto !important;
+    height: auto !important; /* Let it grow to fit 9 pages */
+    overflow: visible !important; /* CRITICAL: Allows subsequent pages to print */
     visibility: visible !important;
     opacity: 1 !important;
   }
 
   @page { 
     size: letter portrait; 
-    margin: 0.4in; 
+    margin: 0.3in; 
   }
 
   .print-page { 
     width: 100% !important;
     max-width: 100% !important;
     margin: 0 auto !important;
+    background: #ffffff !important;
+    page-break-inside: avoid !important;
     page-break-after: always !important; 
     break-after: page !important; 
   }
@@ -1605,57 +1608,76 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
     break-after: auto !important; 
   }
 
-  /* ONE-PAGE FIT CONSTRAINT */
   .print-widget {
     width: 100% !important; 
-    max-width: 100% !important;
-    max-height: 10in !important; /* Forces everything to stay inside 1 piece of paper */
+    max-height: 10in !important; /* Keeps individual players to 1 page */
     display: flex !important;
     flex-direction: column !important;
+    background: #ffffff !important;
     border: none !important;
     box-shadow: none !important;
-    page-break-inside: avoid !important;
-    break-inside: avoid !important;
   }
 
-  /* SHRINK THE MAIN GRID SLIGHTLY TO MAKE ROOM */
+  /* 3. FORCE THE GRID TO BE WHITE FOR iOS */
+  .print-widget .pitch-zone,
+  .print-widget .pitch-zone svg,
+  .print-widget .zone-grid {
+    background-color: #ffffff !important;
+    background: #ffffff !important; 
+  }
+
+  /* SHRINK GRID TO FIT INFO BOXES */
   .print-widget .pitch-zone {
-    width: 420px !important; 
-    height: 420px !important;
-    margin: 0 auto 10px auto !important;
-    flex-shrink: 0 !important; /* Prevents it from getting squished out of proportion */
+    width: 360px !important; 
+    height: 360px !important;
+    margin: 0 auto 5px auto !important;
+    flex-shrink: 0 !important;
+    border: 2px solid #000 !important; /* Give it a clean border for the printout */
   }
 
-  /* Hide interactive nav controls */
+  /* 4. COMPACT 3-COLUMN INFO LAYOUT (Prevents Cut-offs) */
+  .print-widget .info-section {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr 1fr !important; /* Puts boxes side-by-side */
+    gap: 6px !important;
+    padding: 6px !important;
+    margin: 0 !important;
+    border: none !important;
+    border-top: 2px solid #000 !important;
+    background: #ffffff !important;
+  }
+
+  /* Make text tiny and compact so it all fits */
+  .print-widget .info-section * {
+    font-size: 11px !important;
+    line-height: 1.2 !important;
+    color: #000000 !important;
+  }
+
+  .print-widget .info-section h3,
+  .print-widget .info-section h4 {
+    font-size: 13px !important;
+    font-weight: 900 !important;
+    text-transform: uppercase !important;
+    margin-bottom: 3px !important;
+    border-bottom: 1px solid #ccc !important;
+  }
+
+  .print-widget .info-section > div {
+    padding: 4px !important;
+    margin: 0 !important;
+    border: 1px solid #eee !important;
+  }
+
+  /* Hide UI Buttons */
   .print-widget .header__controls,
   .print-widget .info-btn,
   .print-widget .settings-btn { display: none !important; }
 
-  /* Keep colors intact */
+  /* Pitch Circle Colors */
   .print-widget .pitch-circle--good { background: #10b981 !important; }
   .print-widget .pitch-circle--bad  { background: #ef4444 !important; }
   .print-widget .pitch-zone::after { background-color: transparent !important; }
-
-  /* COMPACT THE INFO BOXES SO THEY FIT ON THE BOTTOM */
-  .print-widget .info-section {
-    padding: 6px !important;
-    margin: 0 !important;
-    gap: 6px !important;
-    border: none !important;
-    border-top: 2px solid #e2e8f0 !important;
-  }
-
-  .print-widget .power-sequence,
-  .print-widget .tendencies {
-    padding: 8px 10px !important; 
-    margin-bottom: 2px !important;
-  }
-
-  .print-widget .pitch-zone-section,
-  .print-widget .info-section {
-    background: white !important;
-    color: #0f172a !important;
-  }
 }
 
 .team-btn:hover {
