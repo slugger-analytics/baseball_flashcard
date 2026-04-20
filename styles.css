@@ -1561,12 +1561,12 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
     margin: 0 !important; 
     padding: 0 !important;
     width: 100% !important;
-    height: 100% !important;
+    height: auto !important; /* THE MAGIC FIX FOR MULTIPLE PAGES */
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
   }
 
-  /* Keep the main app hidden to prevent viewport freezing, but DO NOT use display:none */
+  /* Keep the main app hidden to prevent viewport freezing */
   #app { 
     position: absolute !important;
     visibility: hidden !important; 
@@ -1576,16 +1576,17 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
     z-index: -999 !important;
   }
 
-  /* 2. FIX THE 1-PAGE LINEUP CUTOFF */
+  /* Ensure print containers can expand to fit all 9 pages */
   #print-container, #lineup-print-container {
     position: relative !important;
     left: 0 !important;
     top: 0 !important;
     width: 100% !important;
-    height: auto !important; /* Let it grow to fit 9 pages */
-    overflow: visible !important; /* CRITICAL: Allows subsequent pages to print */
+    height: auto !important; 
+    overflow: visible !important; 
     visibility: visible !important;
     opacity: 1 !important;
+    display: block !important;
   }
 
   @page { 
@@ -1610,20 +1611,25 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
 
   .print-widget {
     width: 100% !important; 
-    max-height: 10in !important; /* Keeps individual players to 1 page */
+    max-height: 10in !important; 
     display: flex !important;
     flex-direction: column !important;
-    background: #ffffff !important;
+    background: transparent !important;
     border: none !important;
     box-shadow: none !important;
   }
 
-  /* 3. FORCE THE GRID TO BE WHITE FOR iOS */
-  .print-widget .pitch-zone,
-  .print-widget .pitch-zone svg,
-  .print-widget .zone-grid {
-    background-color: #ffffff !important;
-    background: #ffffff !important; 
+  /* THE GRID LINE FIX: Solid mid-gray shows up on both Black (iOS) and White (Desktop) backgrounds */
+  .print-widget .pitch-zone line,
+  .print-widget .zone-grid,
+  .print-widget .zone-grid div {
+    stroke: #888888 !important; 
+    border-color: #888888 !important;
+  }
+
+  .print-widget .pitch-zone line {
+    stroke-width: 3px !important; 
+    opacity: 1 !important;
   }
 
   /* SHRINK GRID TO FIT INFO BOXES */
@@ -1632,13 +1638,13 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
     height: 360px !important;
     margin: 0 auto 5px auto !important;
     flex-shrink: 0 !important;
-    border: 2px solid #000 !important; /* Give it a clean border for the printout */
+    border: 2px solid #888888 !important; 
   }
 
-  /* 4. COMPACT 3-COLUMN INFO LAYOUT (Prevents Cut-offs) */
+  /* COMPACT 3-COLUMN INFO LAYOUT */
   .print-widget .info-section {
     display: grid !important;
-    grid-template-columns: 1fr 1fr 1fr !important; /* Puts boxes side-by-side */
+    grid-template-columns: 1fr 1fr 1fr !important; 
     gap: 6px !important;
     padding: 6px !important;
     margin: 0 !important;
@@ -1647,7 +1653,6 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
     background: #ffffff !important;
   }
 
-  /* Make text tiny and compact so it all fits */
   .print-widget .info-section * {
     font-size: 11px !important;
     line-height: 1.2 !important;
