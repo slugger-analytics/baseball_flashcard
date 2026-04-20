@@ -518,7 +518,7 @@ printCurrentCard() {
     const batter = lineup[this.selectedBatterIndex];
     singleContainer.appendChild(this.buildPrintPage(batter, this.selectedTeam, this.selectedBatterIndex));
 
-    const printSize = Math.round(CURRENT_SETTINGS.pitchCircleSize * 2);
+    const printSize = Math.round(CURRENT_SETTINGS.pitchCircleSize * 0.75);
     singleContainer.querySelectorAll('.pitch-zone').forEach(el => {
       el.style.setProperty('--pitch-circle-size', `${printSize}px`)
     });
@@ -544,7 +544,7 @@ printCurrentCard() {
       lineupContainer.appendChild(this.buildPrintPage(batter, this.selectedTeam, idx));
     });
 
-    const printSize = Math.round(CURRENT_SETTINGS.pitchCircleSize * 2);
+    const printSize = Math.round(CURRENT_SETTINGS.pitchCircleSize * 0.75);
     lineupContainer.querySelectorAll('.pitch-zone').forEach(el => {
       el.style.setProperty('--pitch-circle-size', `${printSize}px`)
     });

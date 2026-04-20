@@ -1695,10 +1695,10 @@ button:active {
     opacity: 1 !important;
   }
 
-  /* SHRINK GRID TO FIT INFO BOXES */
+/* FIX ASPECT RATIO: Tall Rectangle (3:4) to match mobile, keeps height safe for 1-page */
   .print-widget .pitch-zone {
-    width: 360px !important; 
-    height: 360px !important;
+    width: 270px !important; /* Narrowed the width to create the tall rectangle */
+    height: 360px !important; /* Kept height identical so bottom text doesn't shift */
     margin: 0 auto 5px auto !important;
     flex-shrink: 0 !important;
     border: 2px solid #888888 !important; 
@@ -2031,4 +2031,15 @@ button:active {
 .app-header .info-btn span {
   display: inline-flex !important;
   align-items: center !important;
+}
+
+/* Make the landing page instructions smaller and less distracting */
+.empty-state p, 
+.placeholder-text, 
+.welcome-subtitle {
+  font-size: 15px !important;
+  font-weight: 400 !important;
+  color: #64748b !important; /* Lighter gray so it doesn't fight the title */
+  margin-top: 8px !important;
+  line-height: 1.4 !important;
 }
