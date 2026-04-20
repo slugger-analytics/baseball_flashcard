@@ -1532,12 +1532,28 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
 }
 
 @media print {
-  /* Hide the app UI — show only the off-screen print containers */
-  #app { display: none !important; }
+  /* Force white background across the entire document */
+  html, body { 
+    background: #ffffff !important; 
+    color: #000000 !important;
+    margin: 0 !important; 
+    padding: 0 !important;
+    width: 100% !important;
+  }
+
+  /* Safe hide for iOS - prevents viewport collapse freezing */
+  #app { 
+    position: absolute !important;
+    visibility: hidden !important; 
+    height: 0 !important; 
+    overflow: hidden !important;
+  }
+
   #print-container, #lineup-print-container {
-    position: static !important;
+    position: relative !important;
     left: 0 !important;
     top: 0 !important;
+    width: 100% !important;
   }
 
   /* Force browsers to print background colors & images */
@@ -1546,25 +1562,50 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
     print-color-adjust: exact !important;
   }
 
-  @page { margin: 0.5in; }
+  @page { 
+    size: portrait; 
+    margin: 0.5in; 
+  }
 
   /* Page break between each player in lineup print */
-  .print-page { page-break-after: always; break-after: page; }
-  .print-page:last-child { page-break-after: avoid; break-after: avoid; }
+  .print-page { 
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 auto !important;
+    page-break-after: always !important; 
+    break-after: page !important; 
+  }
+  
+  .print-page:last-child { 
+    page-break-after: auto !important; 
+    break-after: auto !important; 
+  }
 
-  /* Hide interactive nav controls */
+  /* Scale widget to fit the paper */
+  .print-widget {
+    width: 100% !important; 
+    max-width: 100% !important;
+    border: none !important;
+    box-shadow: none !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  /* Shrink the grid to fit on standard paper */
+  .print-widget .pitch-zone {
+    width: 500px !important; 
+    height: 500px !important;
+    margin: 0 auto !important;
+  }
+
   .print-widget .header__controls,
   .print-widget .info-btn,
   .print-widget .settings-btn { display: none !important; }
 
-  /* Solid fill colors for pitch circles (gradient strips in print) */
   .print-widget .pitch-circle--good { background: #10b981 !important; }
   .print-widget .pitch-circle--bad  { background: #ef4444 !important; }
-
-  /* Keep pitch zone grid lines */
   .print-widget .pitch-zone::after { background-color: transparent !important; }
 
-  /* Info section: don't clip, remove sidebar border */
   .print-widget .info-section {
     max-height: none !important;
     overflow: visible !important;
@@ -1572,8 +1613,6 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
     border-top: 1px solid #e2e8f0 !important;
   }
 
-  /* White backgrounds */
-  .print-widget,
   .print-widget .pitch-zone-section,
   .print-widget .info-section {
     background: white !important;

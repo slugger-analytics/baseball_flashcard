@@ -495,7 +495,11 @@ class FlashcardApp {
       el.style.setProperty('--pitch-circle-size', `${printSize}px`)
     });
 
-    setTimeout(() => window.print(), 30);
+    const savedScroll = window.scrollY;
+    setTimeout(() => {
+      window.print();
+      setTimeout(() => window.scrollTo(0, savedScroll), 500); 
+    }, 150);
   }
   printLineup() {
     const lineup = TEAMS_DATA[this.selectedTeam];
@@ -511,7 +515,11 @@ class FlashcardApp {
       el.style.setProperty('--pitch-circle-size', `${printSize}px`)
     });
 
-    setTimeout(() => window.print(), 30);
+    const savedScroll = window.scrollY;
+    setTimeout(() => {
+      window.print();
+      setTimeout(() => window.scrollTo(0, savedScroll), 500); 
+    }, 150);
   }
   toggleInfo() {
     this.showInfoPanel = !this.showInfoPanel;
@@ -876,62 +884,55 @@ try {
             'Custom Date Range'
           ),
           createElement('div', { className: 'date-inputs-row' },
-            createElement('div', { style: { flex: 1 } },
+            //TODO: new fix for ios
+
+createElement('div', { style: { flex: 1 } },
               createElement('label', { style: { display: 'block', fontSize: '12px', marginBottom: '5px', color: '#666' } }, 'Start Date'),
               createElement('div', { style: { display: 'flex', gap: '6px', alignItems: 'center' } },
-              createElement('input', {
-                id: 'startDate', type: 'text',
-                placeholder: 'YYYY-MM-DD',
-                value: this.lastStartDate || '',
-                style: { flex: 1, padding: '10px', borderRadius: '4px', border: '1px solid #ccc', cursor: 'text', minWidth: 0 }
-              }),
-              createElement('button', {
-                type: 'button',
-                title: 'Open calendar',
-                style: { padding: '8px 10px', border: '1px solid #ccc', borderRadius: '4px', background: 'white', cursor: 'pointer', fontSize: '16px', flexShrink: 0 },
-                onclick: (e) => {
-                  const picker = document.createElement('input');
-                  picker.type = 'date';
-                  const _r0 = e.currentTarget.getBoundingClientRect();
-                  picker.style.cssText = `position:fixed;opacity:0.01;top:${_r0.top}px;left:${_r0.left}px;width:${_r0.width}px;height:${_r0.height}px;`;
-                  const cur = document.getElementById('startDate').value;
-                  if (cur && /^\d{4}-\d{2}-\d{2}$/.test(cur)) picker.value = cur;
-                  document.body.appendChild(picker);
-                  picker.addEventListener('change', () => { document.getElementById('startDate').value = picker.value; picker.remove(); });
-                  picker.addEventListener('blur', () => setTimeout(() => picker.remove(), 200));
-                  try { picker.showPicker(); } catch(ex) { picker.focus(); picker.click(); }
-                }
-              }, '📅')
-            )
+                createElement('input', {
+                  id: 'startDate', type: 'text',
+                  placeholder: 'YYYY-MM-DD',
+                  value: this.lastStartDate || '',
+                  style: { flex: 1, padding: '10px', borderRadius: '4px', border: '1px solid #ccc', cursor: 'text', minWidth: 0 }
+                }),
+                createElement('div', { style: { position: 'relative', display: 'inline-block', flexShrink: 0 } },
+                  createElement('button', {
+                    type: 'button',
+                    title: 'Open calendar',
+                    style: { padding: '8px 10px', border: '1px solid #ccc', borderRadius: '4px', background: 'white', cursor: 'pointer', fontSize: '16px' }
+                  }, '📅'),
+                  createElement('input', {
+                    type: 'date',
+                    style: { position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', opacity: 0, cursor: 'pointer' },
+                    onchange: (e) => { document.getElementById('startDate').value = e.target.value; }
+                  })
+                )
+              )
             ),
             createElement('div', { style: { flex: 1 } },
               createElement('label', { style: { display: 'block', fontSize: '12px', marginBottom: '5px', color: '#666' } }, 'End Date'),
               createElement('div', { style: { display: 'flex', gap: '6px', alignItems: 'center' } },
-              createElement('input', {
-                id: 'endDate', type: 'text',
-                placeholder: 'YYYY-MM-DD',
-                value: this.lastEndDate || '',
-                style: { flex: 1, padding: '10px', borderRadius: '4px', border: '1px solid #ccc', cursor: 'text', minWidth: 0 }
-              }),
-              createElement('button', {
-                type: 'button',
-                title: 'Open calendar',
-                style: { padding: '8px 10px', border: '1px solid #ccc', borderRadius: '4px', background: 'white', cursor: 'pointer', fontSize: '16px', flexShrink: 0 },
-                onclick: (e) => {
-                  const picker = document.createElement('input');
-                  picker.type = 'date';
-                  const _r0 = e.currentTarget.getBoundingClientRect();
-                  picker.style.cssText = `position:fixed;opacity:0.01;top:${_r0.top}px;left:${_r0.left}px;width:${_r0.width}px;height:${_r0.height}px;`;
-                  const cur = document.getElementById('endDate').value;
-                  if (cur && /^\d{4}-\d{2}-\d{2}$/.test(cur)) picker.value = cur;
-                  document.body.appendChild(picker);
-                  picker.addEventListener('change', () => { document.getElementById('endDate').value = picker.value; picker.remove(); });
-                  picker.addEventListener('blur', () => setTimeout(() => picker.remove(), 200));
-                  try { picker.showPicker(); } catch(ex) { picker.focus(); picker.click(); }
-                }
-              }, '📅')
+                createElement('input', {
+                  id: 'endDate', type: 'text',
+                  placeholder: 'YYYY-MM-DD',
+                  value: this.lastEndDate || '',
+                  style: { flex: 1, padding: '10px', borderRadius: '4px', border: '1px solid #ccc', cursor: 'text', minWidth: 0 }
+                }),
+                createElement('div', { style: { position: 'relative', display: 'inline-block', flexShrink: 0 } },
+                  createElement('button', {
+                    type: 'button',
+                    title: 'Open calendar',
+                    style: { padding: '8px 10px', border: '1px solid #ccc', borderRadius: '4px', background: 'white', cursor: 'pointer', fontSize: '16px' }
+                  }, '📅'),
+                  createElement('input', {
+                    type: 'date',
+                    style: { position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', opacity: 0, cursor: 'pointer' },
+                    onchange: (e) => { document.getElementById('endDate').value = e.target.value; }
+                  })
+                )
+              )
             )
-            )
+          // TODO: end
           ),
           createElement('button', {
             className: 'team-btn', style: { width: '100%', padding: '12px', fontSize: '16px' },
