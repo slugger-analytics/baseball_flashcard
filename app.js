@@ -1252,7 +1252,7 @@ createElement('div', {},
                   createElement('span', { style: { fontSize: '18px', fontWeight: '800', color: textColor, lineHeight: '1.1', textAlign: 'center', width: '100%' } }, value),
                   createElement('span', { style: { fontSize: '11px', fontWeight: '500', color: '#64748b', marginTop: '2px', textAlign: 'center', width: '100%' } },
                     label,
-                    tooltip ? createElement('span', { style: { marginLeft: '4px', fontSize: '11px', color: '#93c5fd', cursor: 'default' } }, '🛈') : null
+                    tooltip ? createElement('span', { style: { marginLeft: '4px', fontSize: '11px', color: '#93c5fd', cursor: 'default' } }, 'ⓘ') : null
                   )
                 )
               )
