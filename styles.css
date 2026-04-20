@@ -1682,7 +1682,7 @@ button:active {
     -webkit-box-shadow: inset 0 0 0 1000px #ffffff !important;
   }
   
-  // /* THE GRID LINE FIX: Solid mid-gray shows up on both Black (iOS) and White (Desktop) backgrounds */
+  /* THE GRID LINE FIX: Solid mid-gray shows up on both Black (iOS) and White (Desktop) backgrounds */
   .print-widget .pitch-zone line,
   .print-widget .zone-grid,
   .print-widget .zone-grid div {
@@ -1748,7 +1748,6 @@ button:active {
   /* TURN OFF THE OLD CSS GRID FOR PRINTING */
   .print-widget .pitch-zone::after { display: none !important; }
 }
-*/
 
 .team-btn:hover {
   transform: translateY(-4px);
