@@ -391,7 +391,7 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
 
 .print-btn {
   padding: 10px 20px;
-  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  background: #10b981;
   color: white;
   border: none;
   border-radius: 10px;
@@ -399,9 +399,20 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
   font-weight: 600;
   cursor: pointer;
   box-shadow: var(--shadow-sm);
+  transition: all 0.2s ease;
+}
+
+.print-btn:hover {
+  background: #059669;
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
 }
 
 .lineup-header .back-btn:hover {
+  transform: translateY(calc(-50% - 2px));
+}
+
+.lineup-header .print-btn:hover {
   transform: translateY(calc(-50% - 2px));
 }
 
@@ -562,11 +573,11 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
     "header header"
     "pitch info";
   grid-template-columns: 1.4fr 0.6fr;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto auto;
   gap: 0;
   width: var(--widget-width);
   height: auto;
-  min-height: 70vh;
+  min-height: 0;
   background: var(--panel);
   border: 1px solid rgba(255, 255, 255, 0.5);
   border-radius: 20px;
@@ -803,6 +814,7 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
   display: flex;
   flex-direction: column;
   gap: clamp(12px, 2vw, 16px);
+  max-height: calc(100vh - 80px);
 }
 
 .info-btn, .settings-btn {

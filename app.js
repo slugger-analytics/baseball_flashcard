@@ -723,15 +723,13 @@ try {
       this.loadDataRange(startStr, endStr, maxVel, seasonYear, pitchGroup, dateLabel);
 }
 
-  showDateSelect() { 
-    this.currentScreen = 'dateSelect'; 
-    this.validationError = null; 
-    this.noDataError = null; 
+  showDateSelect() {
+    this.currentScreen = 'dateSelect';
+    this.validationError = null;
+    this.noDataError = null;
     cachedSeasonData = null;
     cachedDateRange = { start: null, end: null, maxVelocity: null, pitchGroup: null };
-    this.lastStartDate = null;
-    this.lastEndDate = null;
-    this.render(); 
+    this.render();
   }
   showTeamSelect() { this.currentScreen = 'teamSelect'; this.selectedTeam = null; this.render(); }
   showLineup(team) {
@@ -945,11 +943,15 @@ createElement('div', { style: { flex: 1 } },
                   createElement('button', {
                     type: 'button',
                     title: 'Open calendar',
-                    style: { padding: '8px 10px', border: '1px solid #ccc', borderRadius: '4px', background: 'white', cursor: 'pointer', fontSize: '16px' }
+                    style: { padding: '8px 10px', border: '1px solid #ccc', borderRadius: '4px', background: 'white', cursor: 'pointer', fontSize: '16px' },
+                    onclick: (e) => {
+                      const input = e.currentTarget.nextElementSibling;
+                      if (input && input.showPicker) input.showPicker();
+                    }
                   }, '📅'),
                   createElement('input', {
                     type: 'date',
-                    style: { position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', opacity: 0, cursor: 'pointer' },
+                    style: { position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', opacity: 0, cursor: 'pointer', pointerEvents: 'none' },
                     onchange: (e) => { document.getElementById('startDate').value = e.target.value; }
                   })
                 )
@@ -968,11 +970,15 @@ createElement('div', { style: { flex: 1 } },
                   createElement('button', {
                     type: 'button',
                     title: 'Open calendar',
-                    style: { padding: '8px 10px', border: '1px solid #ccc', borderRadius: '4px', background: 'white', cursor: 'pointer', fontSize: '16px' }
+                    style: { padding: '8px 10px', border: '1px solid #ccc', borderRadius: '4px', background: 'white', cursor: 'pointer', fontSize: '16px' },
+                    onclick: (e) => {
+                      const input = e.currentTarget.nextElementSibling;
+                      if (input && input.showPicker) input.showPicker();
+                    }
                   }, '📅'),
                   createElement('input', {
                     type: 'date',
-                    style: { position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', opacity: 0, cursor: 'pointer' },
+                    style: { position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', opacity: 0, cursor: 'pointer', pointerEvents: 'none' },
                     onchange: (e) => { document.getElementById('endDate').value = e.target.value; }
                   })
                 )
@@ -1044,17 +1050,6 @@ createElement('div', {},
               className: 'team-btn', style: { padding: '8px 10px', fontSize: '13px', flex: 1, minWidth: '130px', background: 'rgb(26, 71, 143)', border: 'none', boxShadow: 'none' },
               onclick: () => this.fetchSmartData(null)
             }, 'Load Last Full Season'),
-            createElement('button', {
-              // Quick Demo — red pill button
-              className: 'team-btn', style: { padding: '8px 10px', fontSize: '13px', flex: 1, minWidth: '130px', background: '#dc2626', border: 'none', boxShadow: 'none' },
-              onclick: () => {
-                const maxVel = document.getElementById('maxVelocity').value;
-                const pitchGroup = document.getElementById('pitchGroup').value;
-                this.lastStartDate = '2025-04-21';
-                this.lastEndDate = '2025-04-28';
-                this.loadDataRange('2025-04-21', '2025-04-28', maxVel, null, pitchGroup);
-              }
-            }, 'Quick Demo (Apr 21–28, 2025)')
           )
         )
       )
