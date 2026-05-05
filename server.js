@@ -3,6 +3,12 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
+const fs = require('fs');
+const path = require('path');
+const { withParserAsStream } = require('stream-json/streamers/stream-array.js');
+
+const CACHE_DIR = path.join(__dirname, 'cache');
+if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
 
 const app = express();
 app.use(cors());
@@ -161,28 +167,59 @@ function getTeamName(code) {
 }
 
 
-// Add this at the top of your file after the other constants (around line 170)
-const pitchCache = new Map();
+/**
+ * Returns the disk path for a cached pitch range file.
+ */
+function getCachePath(startDate, endDate) {
+  return path.join(CACHE_DIR, `cache_${startDate}_${endDate}.json`);
+}
 
 /**
- * Fetches all pitch records for a date range from the SLUGGER API, with in-memory caching.
+ * Streams a cached pitch array from disk using fs.createReadStream + stream-json.
+ * Records are parsed incrementally so the full array is never simultaneously resident.
+ */
+function readDiskCache(filePath) {
+  return new Promise((resolve, reject) => {
+    const records = [];
+    const pipeline = fs.createReadStream(filePath).pipe(withParserAsStream());
+    pipeline.on('data', ({ value }) => records.push(value));
+    pipeline.on('end', () => resolve(records));
+    pipeline.on('error', reject);
+  });
+}
+
+/**
+ * Writes a pitch array to disk as JSON for subsequent streamed reads.
+ */
+function writeDiskCache(filePath, pitches) {
+  return new Promise((resolve, reject) => {
+    const ws = fs.createWriteStream(filePath);
+    ws.on('finish', resolve);
+    ws.on('error', reject);
+    ws.write(JSON.stringify(pitches));
+    ws.end();
+  });
+}
+
+/**
+ * Fetches all pitch records for a date range from the SLUGGER API, with disk-backed streaming cache.
+ * On a cache miss, pages are fetched and written to disk; on a hit, records are streamed back
+ * through stream-json without loading the full array into V8 heap simultaneously.
  * @param {string} startDateStr - Start date in YYYY-MM-DD format.
  * @param {string} endDateStr - End date in YYYY-MM-DD format.
  * @returns {Promise<Array>} Array of raw pitch objects, or empty array on error.
  */
 async function fetchPitchesByDateRange(startDateStr, endDateStr) {
-  const cacheKey = `${startDateStr}_${endDateStr}`;
-  
-  // Check memory cache first
-  if (pitchCache.has(cacheKey)) {
-    console.log(`💾 Memory cache hit: ${cacheKey}`);
-    return pitchCache.get(cacheKey);
+  const cachePath = getCachePath(startDateStr, endDateStr);
+
+  if (fs.existsSync(cachePath)) {
+    console.log(`💾 Disk cache hit: ${path.basename(cachePath)}`);
+    return readDiskCache(cachePath);
   }
 
   console.log(`Fetching date range from SLUGGER API: ${startDateStr} to ${endDateStr}`);
 
   try {
-    // Fetch all pitches using your existing pagination helper
     const pitches = await fetchAllPages('/pitches', {
       date_range_start: startDateStr,
       date_range_end: endDateStr
@@ -190,24 +227,15 @@ async function fetchPitchesByDateRange(startDateStr, endDateStr) {
 
     console.log(`✅ Success: Fetched ${pitches.length} pitches from API`);
 
-    // Filter by date range
     const filtered = pitches.filter(p => {
       const d = (p.date || '').slice(0, 10);
       return d >= startDateStr && d <= endDateStr;
     });
-    
+
     console.log(`✅ After date filter (${startDateStr} → ${endDateStr}): ${filtered.length} pitches`);
 
-    // Store in memory cache
-    pitchCache.set(cacheKey, filtered);
-    console.log(`💾 Memory cache stored: ${cacheKey} (${filtered.length} pitches)`);
-
-    // Limit cache size to prevent memory issues (keep last 20 ranges)
-    if (pitchCache.size > 20) {
-      const firstKey = pitchCache.keys().next().value;
-      pitchCache.delete(firstKey);
-      console.log(`🗑️  Cache limit reached, removed oldest entry: ${firstKey}`);
-    }
+    await writeDiskCache(cachePath, filtered);
+    console.log(`💾 Disk cache stored: ${path.basename(cachePath)} (${filtered.length} pitches)`);
 
     return filtered;
 
@@ -352,7 +380,9 @@ function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 9
     const pitcherName = getPlayerName(pitch.pitcher_id);
     if (!batterName || !teamName || !pitcherName) return;
 
-    const batterKey = `${teamName}_${batterName}`;
+    // Switch hitters are keyed by both name and side so they form two independent profiles.
+    const batterHandedness = pitch.batter_side === 'Left' ? 'LHB' : 'RHB';
+    const batterKey = `${teamName}_${batterName}_${batterHandedness}`;
     if (!teamsData[teamName]) teamsData[teamName] = [];
 
     let batterData = batterMap.get(batterKey);
@@ -505,7 +535,9 @@ function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 9
       if (batter.stats.totalPitches > 0) {
         if (batter.stats.firstPitchPitches > 0) {
           const rate = (batter.stats.firstPitchSwings / batter.stats.firstPitchPitches * 100);
-          batter.tendencies.firstStrike = rate > 50 ? `Aggressive (${rate.toFixed(0)}%)` : `Patient (${rate.toFixed(0)}%)`;
+          batter.tendencies.firstStrike = rate >= 70 ? `Aggressive (${rate.toFixed(0)}%)`
+                                        : rate <= 35 ? `Patient (${rate.toFixed(0)}%)`
+                                        :              `Neutral (${rate.toFixed(0)}%)`;
         }
 
         // Use improved threat assessments
@@ -792,7 +824,7 @@ const weaknessZonesHandler = async (req, res) => {
 
     const weaknessZones = calculateWeaknessZones(batter, confidenceThreshold);
 
-    const zonesToDisplay = confidenceThreshold >= 75 ? 4 : confidenceThreshold >= 50 ? 8 : undefined;
+    const zonesToDisplay = confidenceThreshold >= 75 ? 4 : confidenceThreshold >= 50 ? 8 : 9;
 
     const sortedZones = Object.entries(weaknessZones)
       .map(([zone, data]) => ({
@@ -811,7 +843,7 @@ const weaknessZonesHandler = async (req, res) => {
       zones: sortedZones,
       metadata: {
         threshold: confidenceThreshold,
-        zonesDisplayed: zonesToDisplay ?? 'all',
+        zonesDisplayed: zonesToDisplay,
         totalZonesAnalyzed: Object.keys(weaknessZones).length,
         batter: selectedBatter,
         team: selectedTeam
