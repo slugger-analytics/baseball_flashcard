@@ -7,8 +7,10 @@ const fs = require('fs');
 const path = require('path');
 const { withParserAsStream } = require('stream-json/streamers/stream-array.js');
 
-// Vercel's filesystem is read-only except /tmp; use /tmp on Vercel, local cache/ elsewhere.
-const CACHE_DIR = process.env.VERCEL ? '/tmp/cache' : path.join(__dirname, 'cache');
+// Vercel's and Lambda's filesystems are read-only except /tmp; use /tmp there, local cache/ elsewhere.
+const CACHE_DIR = (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME)
+  ? '/tmp/cache'
+  : path.join(__dirname, 'cache');
 if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
 
 const app = express();
