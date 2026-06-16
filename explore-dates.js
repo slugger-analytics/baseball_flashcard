@@ -1,6 +1,6 @@
 const axios = require('axios');
 
-const API_KEY = 'ojgvHrY7Pu4qoE4GDsmxJ1TPZnYa9qwfL9fnI072';
+const API_KEY = process.env.SLUGGER_API_KEY;
 const BASE_URL = 'https://1ywv9dczq5.execute-api.us-east-2.amazonaws.com/ALPBAPI';
 
 async function analyzePitchTypes() {
