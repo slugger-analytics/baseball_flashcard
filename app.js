@@ -217,7 +217,10 @@ function createPitchZone(preFilteredZones, handedness, zoneAnalysis) {
   });
   const isLeftHanded = handedness === 'LHB';
   const batterClass = isLeftHanded ? 'batter-graphic-left-handed' : 'batter-graphic-right-handed';
-  const svgPath = isLeftHanded ? '/lhb.svg' : '/rhb.svg';
+  // Relative paths (matching ./api and ./styles.css) so the batter SVG resolves
+  // under the widget base path on Lambda (/widgets/flashcard/) as well as at the
+  // Vercel root. Absolute '/rhb.svg' 404'd on the Lambda host.
+  const svgPath = isLeftHanded ? './lhb.svg' : './rhb.svg';
   const svgImg = createElement('img', {
     src: svgPath,
     alt: isLeftHanded ? 'Left-Handed Batter' : 'Right-Handed Batter',
