@@ -31,8 +31,12 @@ COPY *.svg ./
 # Lambda Web Adapter configuration
 # PORT: Lambda Web Adapter forwards requests to this port
 # AWS_LWA_READINESS_CHECK_PATH: Health check endpoint for readiness probe
+# AWS_LWA_ENABLE_COMPRESSION: gzip the response body so large teamsData payloads
+#   stay under the ALB 1 MB Lambda-response limit (oversized responses returned a
+#   502, blocking all data loads / team + player selection).
 ENV PORT=8080
 ENV AWS_LWA_READINESS_CHECK_PATH=/health
+ENV AWS_LWA_ENABLE_COMPRESSION=true
 
 # Expose the port for local testing
 EXPOSE 8080
