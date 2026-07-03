@@ -66,7 +66,11 @@ jobs:
 
       - name: Smoke test
         run: |
-          sleep 5
-          curl --fail --silent --show-error --max-time 30 \
-            "https://www.alpb-analytics.com/widgets/flashcard/" > /dev/null \
-            && echo "Smoke OK" || (echo "Smoke FAILED" && exit 1)
+          # Retry to absorb the arm64 Lambda cold start after the image swap.
+          for i in $(seq 1 10); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 \
+              "https://www.alpb-analytics.com/widgets/flashcard/" || echo 000)
+            if [ "$code" = "200" ]; then echo "Smoke OK ($code) on attempt $i"; exit 0; fi
+            echo "attempt $i: HTTP $code — retrying in 15s"; sleep 15
+          done
+          echo "Smoke FAILED after 10 attempts"; exit 1
