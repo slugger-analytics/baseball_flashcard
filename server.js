@@ -678,7 +678,29 @@ function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 9
       }
     });
   });
-  return teamsData;
+
+  // Response slimming. The frontend (app.js) reads only the fields below; the raw
+  // plateAppearances / atBats / *Sequences accumulators exist solely to derive
+  // tendencies + powerSequence above. Shipping them inflated the payload past the
+  // ALB 1 MB Lambda-response limit, which reached users as a 502 (data never loaded,
+  // so the team/player-selection panels were never reachable). Return only what the
+  // UI consumes.
+  const RESPONSE_FIELDS = [
+    'batter', 'handedness', 'jerseyNumber',
+    'stats', 'pitchZones', 'zoneAnalysis',
+    'tendencies', 'powerSequence', 'powerSequenceBreakdown',
+  ];
+  const slimData = {};
+  for (const [teamName, batters] of Object.entries(teamsData)) {
+    slimData[teamName] = batters.map(batter => {
+      const slim = {};
+      for (const field of RESPONSE_FIELDS) {
+        if (batter[field] !== undefined) slim[field] = batter[field];
+      }
+      return slim;
+    });
+  }
+  return slimData;
 }
 
 /**
