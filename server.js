@@ -94,25 +94,69 @@ async function sluggerRequest(endpoint, params = {}) {
 }
 
 /**
- * Fetches all pages from a paginated SLUGGER API endpoint (up to 10 pages / 10,000 records).
+ * Fetches all pages from a paginated SLUGGER API endpoint, up to MAX_PAGES.
+ *
+ * Pages are fetched in fixed-size concurrent batches rather than strictly one-at-a-time.
+ * The upstream API exposes no total-count, so a page returning fewer than PAGE_SIZE records
+ * marks the end of data; the batch containing that short page is the last batch fetched.
+ * Record order is preserved exactly — batches, and results within a batch, are appended in
+ * page order — while wall-clock latency collapses from sum-of-pages to sum-of-batches. A
+ * 36-page range drops from 36 serial round trips to ~5 batches at PAGE_CONCURRENCY=8, i.e.
+ * roughly an 8x reduction in the dominant fetch time.
+ *
  * @param {string} endpoint - API path to paginate (e.g. '/pitches').
  * @param {Object} [params={}] - Additional query parameters merged into each page request.
- * @returns {Promise<Array>} Combined array of all records across all pages.
+ * @returns {Promise<Array>} Combined array of all records across all pages, in page order.
  */
 async function fetchAllPages(endpoint, params = {}) {
   const MAX_PAGES = 500;
-  let allData = [], page = 1, hasMore = true;
-  while (hasMore && page <= MAX_PAGES) {
-    const response = await sluggerRequest(endpoint, { ...params, page, limit: 1000 });
-    if (response.success && response.data) {
-      const items = Array.isArray(response.data) ? response.data : [response.data];
-      allData = allData.concat(items);
-      hasMore = items.length === 1000;
-      if (hasMore) console.log(`  Fetching page ${page + 1} (${allData.length} records so far)...`);
-      page++;
-    } else hasMore = false;
+  const PAGE_SIZE = 1000;
+  const PAGE_CONCURRENCY = 8;
+  const allData = [];
+  let nextPage = 1;
+  let reachedEnd = false;
+
+  while (!reachedEnd && nextPage <= MAX_PAGES) {
+    const batchPages = [];
+    for (let i = 0; i < PAGE_CONCURRENCY && nextPage + i <= MAX_PAGES; i++) {
+      batchPages.push(nextPage + i);
+    }
+
+    const settled = await Promise.allSettled(
+      batchPages.map(p => sluggerRequest(endpoint, { ...params, page: p, limit: PAGE_SIZE }))
+    );
+
+    // settled is in page order (ascending), so any short/empty page is processed before the
+    // speculative pages that follow it within the same batch.
+    for (const result of settled) {
+      if (result.status === 'rejected') {
+        // A batch speculatively requests up to PAGE_CONCURRENCY pages at once, so some may
+        // lie past the true end of data. Once an earlier page has signalled end-of-data, a
+        // failure on those speculative pages is harmless and must not fail the whole fetch.
+        // A failure seen before any end signal is a real in-range error — surface it (both
+        // callers wrap this in try/catch) rather than silently truncating the dataset.
+        if (reachedEnd) continue;
+        throw result.reason;
+      }
+      const response = result.value;
+      if (response.success && response.data) {
+        const items = Array.isArray(response.data) ? response.data : [response.data];
+        allData.push(...items);
+        if (items.length < PAGE_SIZE) reachedEnd = true;
+      } else {
+        reachedEnd = true;
+      }
+    }
+
+    if (!reachedEnd) {
+      console.log(`  Fetched ${allData.length} records (through page ${batchPages[batchPages.length - 1]})...`);
+    }
+    nextPage += batchPages.length;
   }
-  if (page > MAX_PAGES) console.warn(`⚠️  fetchAllPages hit the ${MAX_PAGES}-page safety ceiling on ${endpoint}`);
+
+  if (nextPage > MAX_PAGES && !reachedEnd) {
+    console.warn(`⚠️  fetchAllPages hit the ${MAX_PAGES}-page safety ceiling on ${endpoint}`);
+  }
   return allData;
 }
 
