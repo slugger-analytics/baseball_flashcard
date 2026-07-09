@@ -235,17 +235,31 @@ function readDiskCache(filePath) {
   });
 }
 
+// Ranges bigger than this aren't disk-cached: stringifying + writing them can
+// exhaust the Lambda's 512 MB /tmp (and heap), and a failed write used to leave
+// a truncated file that poisoned every later request for the same range.
+const MAX_CACHED_PITCHES = 60000;
+
 /**
  * Writes a pitch array to disk as JSON for subsequent streamed reads.
+ * Writes to a .tmp file first and renames into place so a crash mid-write can
+ * never leave a partially-written cache file at the real path.
  */
-function writeDiskCache(filePath, pitches) {
-  return new Promise((resolve, reject) => {
-    const ws = fs.createWriteStream(filePath);
-    ws.on('finish', resolve);
-    ws.on('error', reject);
-    ws.write(JSON.stringify(pitches));
-    ws.end();
-  });
+async function writeDiskCache(filePath, pitches) {
+  const tmpPath = `${filePath}.tmp`;
+  try {
+    await new Promise((resolve, reject) => {
+      const ws = fs.createWriteStream(tmpPath);
+      ws.on('finish', resolve);
+      ws.on('error', reject);
+      ws.write(JSON.stringify(pitches));
+      ws.end();
+    });
+    fs.renameSync(tmpPath, filePath);
+  } catch (err) {
+    try { fs.unlinkSync(tmpPath); } catch (_) { /* best effort */ }
+    throw err;
+  }
 }
 
 /**
@@ -261,7 +275,14 @@ async function fetchPitchesByDateRange(startDateStr, endDateStr) {
 
   if (fs.existsSync(cachePath)) {
     console.log(`💾 Disk cache hit: ${path.basename(cachePath)}`);
-    return readDiskCache(cachePath);
+    try {
+      return await readDiskCache(cachePath);
+    } catch (err) {
+      // A corrupt/truncated cache file (e.g. from a crash mid-write) would
+      // otherwise fail this range on this container forever — drop and refetch.
+      console.error(`⚠️ Corrupt disk cache ${path.basename(cachePath)}, refetching:`, err.message);
+      try { fs.unlinkSync(cachePath); } catch (_) { /* best effort */ }
+    }
   }
 
   console.log(`Fetching date range from SLUGGER API: ${startDateStr} to ${endDateStr}`);
@@ -281,8 +302,17 @@ async function fetchPitchesByDateRange(startDateStr, endDateStr) {
 
     console.log(`✅ After date filter (${startDateStr} → ${endDateStr}): ${filtered.length} pitches`);
 
-    await writeDiskCache(cachePath, filtered);
-    console.log(`💾 Disk cache stored: ${path.basename(cachePath)} (${filtered.length} pitches)`);
+    // Cache failures must never discard a successful fetch — serve uncached.
+    if (filtered.length <= MAX_CACHED_PITCHES) {
+      try {
+        await writeDiskCache(cachePath, filtered);
+        console.log(`💾 Disk cache stored: ${path.basename(cachePath)} (${filtered.length} pitches)`);
+      } catch (err) {
+        console.error(`⚠️ Disk cache write failed (serving uncached):`, err.message);
+      }
+    } else {
+      console.log(`⏭️ Range too large to disk-cache (${filtered.length} > ${MAX_CACHED_PITCHES} pitches)`);
+    }
 
     return filtered;
 
