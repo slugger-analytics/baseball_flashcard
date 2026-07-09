@@ -14,7 +14,8 @@ const DEFAULT_SETTINGS = {
   showOnlyGoodPitches: false,
   showOnlyBadPitches: false,
   showAllZones: false,
-  showPitcherHand: false,
+  pitcherHandFilter: 'All',   // 'All' | 'L' | 'R' — restrict circles to one pitcher hand
+  hiddenPitchTypes: [],       // pitch abbreviations (e.g. 'SL') currently hidden from the grid
   pitchCircleSize: 38
 };
 let CURRENT_SETTINGS = { ...DEFAULT_SETTINGS };
@@ -75,15 +76,17 @@ function getDefaultSeasonDates() {
 
 /**
  * Returns the date range and year label for the "Load Full Season" button.
- * Pre-season loads the last completed season (2025); in/post-season loads 2026.
+ * Pre-season loads the last completed season (2025); during the 2026 season it
+ * loads opening day through today; after the season it loads the full 2026 run.
  * @returns {{ start: string, end: string, year: number }}
  */
 function getFullSeasonRange() {
   const todayStr = new Date().toISOString().slice(0, 10);
-  if (todayStr > SEASON_2026.end) {
-    return { start: SEASON_2026.start, end: SEASON_2026.end, year: 2026 };
+  if (todayStr < SEASON_2026.start) {
+    return { start: SEASON_2025.start, end: SEASON_2025.end, year: 2025 };
   }
-  return { start: SEASON_2025.start, end: SEASON_2025.end, year: 2025 };
+  const end = todayStr <= SEASON_2026.end ? todayStr : SEASON_2026.end;
+  return { start: SEASON_2026.start, end, year: 2026 };
 }
 /**
  * JSX-like helper that creates a DOM element with props and children.
@@ -120,15 +123,91 @@ function createElement(tag, props = {}, ...children) {
   return el;
 }
 /**
- * Renders the strike zone SVG as a DOM element, placing pitch circles for each zone.
- * Filters zones by handedness and an optional allowedZones whitelist from the weakness slider.
- * @param {Array<Object>} zones - Array of pitchZone objects ({ position, pitch, good, zone }).
- * @param {string} handedness - 'LHB' or 'RHB' — controls left/right mirroring of the SVG.
- * @param {Array<string>|null} [allowedZones=null] - Zone keys to show; null means show all.
- * @returns {HTMLElement} A div containing the SVG pitch zone graphic.
+ * Zone color model: a zone's hit rate (contact hits per pitch thrown there) is
+ * compared against the batter's overall hits-per-pitch rate across all zones.
+ * 25%+ below overall = green (good for the pitcher — attack here), 25%+ above
+ * overall = red (bad for the pitcher — avoid). Zones inside that band, or with
+ * fewer than ZONE_RATING_MIN_PITCHES pitches, stay neutral gray.
+ */
+const ZONE_RATING_MIN_PITCHES = 5;
+const ZONE_RATING_EDGE = 0.25;
+
+/**
+ * Rates every zone in a zoneAnalysis map against the batter's overall hit rate.
+ * @param {Object} zoneAnalysis - Map of zone key → per-zone counting stats.
+ * @returns {{ ratings: Object, overallRate: number|null }} Per-zone
+ *   { rating: 'green'|'red'|'neutral', rate, extremity } plus the overall rate.
+ */
+function computeZoneRatings(zoneAnalysis) {
+  const ratings = {};
+  if (!zoneAnalysis) return { ratings, overallRate: null };
+
+  let totalHits = 0, totalPitches = 0;
+  Object.values(zoneAnalysis).forEach(s => {
+    totalHits += s.contactHits || 0;
+    totalPitches += s.pitches || 0;
+  });
+  const overallRate = totalPitches > 0 ? totalHits / totalPitches : null;
+
+  Object.entries(zoneAnalysis).forEach(([zone, s]) => {
+    const pitches = s.pitches || 0;
+    const rate = pitches > 0 ? (s.contactHits || 0) / pitches : null;
+    let rating = 'neutral';
+    let extremity = -1;
+    if (overallRate > 0 && rate !== null && pitches >= ZONE_RATING_MIN_PITCHES) {
+      if (rate <= overallRate * (1 - ZONE_RATING_EDGE)) rating = 'green';
+      else if (rate >= overallRate * (1 + ZONE_RATING_EDGE)) rating = 'red';
+      // Distance from the batter's average, used to reveal extremes first
+      extremity = Math.abs(rate / overallRate - 1);
+    }
+    ratings[zone] = { rating, rate, extremity, pitches };
+  });
+  return { ratings, overallRate };
+}
+
+/**
+ * Picks the zoneAnalysis matching the active pitcher-hand filter.
+ * @param {Object} batterData - A batter object from TEAMS_DATA.
+ * @returns {Object} Combined stats for 'All', or the vs-LHP / vs-RHP split.
+ */
+function getActiveZoneAnalysis(batterData) {
+  const hand = CURRENT_SETTINGS.pitcherHandFilter;
+  if (hand === 'L' || hand === 'R') return (batterData.zoneAnalysisByHand || {})[hand] || {};
+  return batterData.zoneAnalysis || {};
+}
+
+/**
+ * Copies pitch objects with their zone's rating + extremity attached, so the
+ * grid, filters, and counters all read the same classification.
+ * @param {Array<Object>} zones - Raw pitchZone objects from the server.
+ * @param {{ ratings: Object }} ratingCtx - Output of computeZoneRatings.
+ * @returns {Array<Object>} Annotated copies ({ ...pitch, rating, extremity }).
+ */
+function annotatePitchRatings(zones, ratingCtx) {
+  const ratings = (ratingCtx && ratingCtx.ratings) || {};
+  return (Array.isArray(zones) ? zones : []).map(z => {
+    const info = ratings[z.zone];
+    return { ...z, rating: info ? info.rating : 'neutral', extremity: info ? info.extremity : -1 };
+  });
+}
+
+/**
+ * Filters annotated pitches by pitcher hand, pitch type, the weakness-slider
+ * whitelist, and the green/red-only toggles, then orders them so the most
+ * extreme zones (furthest from the batter's average) come first — the Max
+ * Pitches slider reveals extremes before average zones.
+ * @param {Array<Object>} zones - Pitches annotated by annotatePitchRatings.
+ * @returns {Array<Object>} Filtered, extremity-ordered pitches.
  */
 function getFullyFilteredPitches(zones) {
   let fz = Array.isArray(zones) ? [...zones] : [];
+  const hand = CURRENT_SETTINGS.pitcherHandFilter;
+  if (hand === 'L' || hand === 'R') {
+    fz = fz.filter(z => z.pitcherThrows === hand);
+  }
+  if (CURRENT_SETTINGS.hiddenPitchTypes.length > 0) {
+    fz = fz.filter(z => !CURRENT_SETTINGS.hiddenPitchTypes.includes(z.pitch));
+  }
   if (!CURRENT_SETTINGS.showAllZones) {
     const az = (typeof app !== 'undefined' && app?.allowedZones) ?? null;
     if (az !== null) {
@@ -142,34 +221,47 @@ function getFullyFilteredPitches(zones) {
     }
   }
   if (CURRENT_SETTINGS.showOnlyGoodPitches && !CURRENT_SETTINGS.showOnlyBadPitches) {
-    fz = fz.filter(z => z.good === true);
+    fz = fz.filter(z => z.rating === 'green');
   } else if (CURRENT_SETTINGS.showOnlyBadPitches && !CURRENT_SETTINGS.showOnlyGoodPitches) {
-    fz = fz.filter(z => z.good === false);
+    fz = fz.filter(z => z.rating === 'red');
   }
+  // Stable sort: ties (pitches in the same zone) keep chronological order
+  fz.sort((a, b) => (b.extremity ?? -1) - (a.extremity ?? -1));
   return fz;
 }
-function createPitchZone(preFilteredZones, handedness, zoneAnalysis) {
+function createPitchZone(preFilteredZones, handedness, zoneAnalysis, ratingCtx) {
   const filteredZones = Array.isArray(preFilteredZones) ? preFilteredZones : [];
   const displayZones = filteredZones.slice(0, CURRENT_SETTINGS.maxPitchesDisplayed);
 
-  function showZoneTooltip(circleEl, zoneName, isGood, pitcherHand) {
-    const stats = zoneAnalysis && zoneAnalysis[zoneName];
+  function showZoneTooltip(circleEl, zone) {
+    const stats = zoneAnalysis && zoneAnalysis[zone.zone];
     if (!stats) return;
     const existing = document.getElementById('zone-hover-tooltip');
     if (existing) existing.remove();
     const tip = document.createElement('div');
     tip.id = 'zone-hover-tooltip';
     tip.className = 'zone-hover-tooltip';
-    const goodPill = isGood
-      ? `<span class="zone-tooltip-pill zone-tooltip-pill--good">Good · Attack here</span>`
-      : `<span class="zone-tooltip-pill zone-tooltip-pill--bad">Bad · Avoid here</span>`;
-    const handPill = pitcherHand
-      ? `<span class="zone-tooltip-pill zone-tooltip-pill--hand">${pitcherHand}HP</span>`
+    const rating = zone.rating || 'neutral';
+    const ratingPill = rating === 'green'
+      ? `<span class="zone-tooltip-pill zone-tooltip-pill--good">Green · Attack zone</span>`
+      : rating === 'red'
+        ? `<span class="zone-tooltip-pill zone-tooltip-pill--bad">Red · Avoid zone</span>`
+        : `<span class="zone-tooltip-pill zone-tooltip-pill--neutral">${(stats.pitches || 0) < ZONE_RATING_MIN_PITCHES ? 'Low sample' : 'Near average'}</span>`;
+    const handPill = zone.pitcherThrows
+      ? `<span class="zone-tooltip-pill zone-tooltip-pill--hand">${zone.pitcherThrows}HP</span>`
       : '';
+    const info = ratingCtx && ratingCtx.ratings ? ratingCtx.ratings[zone.zone] : null;
+    const zoneRate = info && info.rate !== null ? `${(info.rate * 100).toFixed(1)}%` : '—';
+    const overallRate = ratingCtx && ratingCtx.overallRate !== null && ratingCtx.overallRate !== undefined
+      ? `${(ratingCtx.overallRate * 100).toFixed(1)}%` : '—';
+    // Anything not in the named buckets (HBP, errors, misc play results) so the
+    // rows below always reconcile with Total
+    const other = Math.max(0, (stats.pitches || 0) - (stats.whiffs || 0) - (stats.takes || 0)
+      - (stats.contactOuts || 0) - (stats.contactHits || 0) - (stats.fouls || 0));
     tip.innerHTML = `
       <div class="zone-tooltip-header">
-        <span class="zone-tooltip-title">${zoneName}</span>
-        <span class="zone-tooltip-pills">${goodPill}${handPill}</span>
+        <span class="zone-tooltip-title">${zone.zone}</span>
+        <span class="zone-tooltip-pills">${ratingPill}${handPill}</span>
       </div>
       <table class="zone-tooltip-table">
         <tr><td>Total</td><td>${stats.pitches}</td></tr>
@@ -178,6 +270,9 @@ function createPitchZone(preFilteredZones, handedness, zoneAnalysis) {
         <tr><td>Contact out</td><td>${stats.contactOuts}</td></tr>
         <tr><td>Contact hit</td><td>${stats.contactHits}</td></tr>
         <tr><td>Foul</td><td>${stats.fouls}</td></tr>
+        ${other > 0 ? `<tr><td>Other</td><td>${other}</td></tr>` : ''}
+        <tr class="zone-tooltip-rate"><td>Zone hit rate</td><td>${zoneRate}</td></tr>
+        <tr class="zone-tooltip-rate"><td>Batter overall</td><td>${overallRate}</td></tr>
       </table>`;
     document.body.appendChild(tip);
     const rect = circleEl.getBoundingClientRect();
@@ -196,8 +291,10 @@ function createPitchZone(preFilteredZones, handedness, zoneAnalysis) {
   const pitchElements = displayZones.map((zone, idx) => {
     const [x, y] = zone.position || [50, 50];
     const pitchType = zone.pitch || 'F';
-    const isGood = zone.good === true;
-    const colorClass = isGood ? 'pitch-circle--good' : 'pitch-circle--bad';
+    const rating = zone.rating || 'neutral';
+    const colorClass = rating === 'green' ? 'pitch-circle--good'
+      : rating === 'red' ? 'pitch-circle--bad'
+      : 'pitch-circle--neutral';
     const pitcherHand = zone.pitcherThrows || '';
     const handClass = pitcherHand === 'L' ? 'pitch-circle__hand--left' : 'pitch-circle__hand--right';
     const isPriority = idx < 4;
@@ -207,11 +304,11 @@ function createPitchZone(preFilteredZones, handedness, zoneAnalysis) {
     const el = createElement('div', {
       className: `pitch-circle ${colorClass}`,
       style: { left: `${x}%`, top: `${y}%`, '--pitch-circle-size': circleSize },
-      onmouseenter: (e) => showZoneTooltip(e.currentTarget, zone.zone, isGood, pitcherHand),
+      onmouseenter: (e) => showZoneTooltip(e.currentTarget, zone),
       onmouseleave: () => hideZoneTooltip()
     },
       createElement('span', { className: 'pitch-circle__type' }, pitchType),
-      CURRENT_SETTINGS.showPitcherHand ? createElement('span', { className: `pitch-circle__hand ${handClass}` }, pitcherHand) : null
+      pitcherHand ? createElement('span', { className: `pitch-circle__hand ${handClass}` }, pitcherHand) : null
     );
     return el;
   });
@@ -318,6 +415,8 @@ const stripPercents = (text) => {
     Object.entries(zoneAnalysis).forEach(([zone, stats]) => {
 
       if ((stats.pitches || 0) < minPitches) return;
+      // No swings in the zone → whiff/chase rates are undefined (0/0 = NaN)
+      if ((stats.swings || 0) === 0) return;
 
       const whiff_percent = (stats.whiffs / stats.swings) * 100;
       const chase_percent = (stats.fouls / stats.swings) * 100;
@@ -597,7 +696,10 @@ buildPrintPage(batter, teamName, orderIndex) {
       )
     );
     
-    const { el: pitchZoneInnerPrint } = createPitchZone(getFullyFilteredPitches(batter.pitchZones || []), batter.handedness, null);
+    const printRatingCtx = computeZoneRatings(getActiveZoneAnalysis(batter));
+    const { el: pitchZoneInnerPrint } = createPitchZone(
+      getFullyFilteredPitches(annotatePitchRatings(batter.pitchZones || [], printRatingCtx)),
+      batter.handedness, null, printRatingCtx);
     
     // THE iOS PRINT HACK: BUILD A PURE HTML GRID RIGHT BEFORE PRINTING
     const zoneEl = pitchZoneInnerPrint.querySelector('.pitch-zone');
@@ -709,7 +811,11 @@ printCurrentCard() {
     if (!lineup) return;
     const data = lineup[this.selectedBatterIndex];
     if (!data) return;
-    const { el } = createPitchZone(getFullyFilteredPitches(data.pitchZones || []), data.handedness, data.zoneAnalysis);
+    const activeZA = getActiveZoneAnalysis(data);
+    const ratingCtx = computeZoneRatings(activeZA);
+    const { el } = createPitchZone(
+      getFullyFilteredPitches(annotatePitchRatings(data.pitchZones || [], ratingCtx)),
+      data.handedness, activeZA, ratingCtx);
     pzSection.innerHTML = '';
     pzSection.appendChild(el);
   }
@@ -900,7 +1006,7 @@ try {
     if (params.dateLabel) {
       seasonText = params.dateLabel;
     } else if (params.seasonYear) {
-      seasonText = `${params.seasonYear} Full Season`;
+      seasonText = `${params.seasonYear} Season`;
     } else {
       const fmt = d => { if (!d) return '?'; const [y,m,day] = d.split('-'); return `${parseInt(m)}/${parseInt(day)}/${y.slice(2)}`; };
       seasonText = `${fmt(params.startDate)} → ${fmt(params.endDate)}`;
@@ -1139,7 +1245,13 @@ createElement('div', {},
               // Deep Navy to match the "Filter Trackman Data" Title
               className: 'team-btn', style: { padding: '8px 10px', fontSize: '13px', flex: 1, minWidth: '130px', background: 'rgb(26, 71, 143)', border: 'none', boxShadow: 'none' },
               onclick: () => this.fetchSmartData(null)
-            }, 'Load Last Full Season'),
+            }, (() => {
+              const fs = getFullSeasonRange();
+              const todayStr = new Date().toISOString().slice(0, 10);
+              return fs.year === 2026 && fs.end === todayStr
+                ? 'Load 2026 Season (to date)'
+                : `Load Full ${fs.year} Season`;
+            })()),
           )
         )
       )
@@ -1375,8 +1487,8 @@ createElement('div', {},
               ...[
                 { label: 'Total Pitches',                   value: rawCount, bg: '#f1f5f9', border: '#cbd5e1', textColor: '#1e293b' },
                 { label: 'Matching Filters',                 value: displayedCount,    bg: '#eff6ff', border: '#93c5fd', textColor: '#1d4ed8', tooltip: 'Pitches currently shown on the grid (limited by Max Pitches Displayed).' },
-                { label: 'Good Pitches',  value: displayedGoodCount, bg: '#f0fdf4', border: '#86efac', textColor: '#15803d' },
-                { label: 'Bad Pitches',   value: displayedBadCount,  bg: '#fef2f2', border: '#fca5a5', textColor: '#b91c1c' },
+                { label: 'Green Zone',  value: displayedGoodCount, bg: '#f0fdf4', border: '#86efac', textColor: '#15803d', tooltip: 'Displayed pitches in zones where the batter hits 25%+ below his overall rate.' },
+                { label: 'Red Zone',   value: displayedBadCount,  bg: '#fef2f2', border: '#fca5a5', textColor: '#b91c1c', tooltip: 'Displayed pitches in zones where the batter hits 25%+ above his overall rate.' },
               ].map(({ label, value, bg, border, textColor, tooltip }) =>
                 createElement('div', { className: 'stat-pill', ...(tooltip ? { 'data-tooltip': tooltip } : {}), style: { display: 'inline-flex', flexDirection: 'column', alignItems: 'center', background: bg, border: `1px solid ${border}`, borderRadius: '10px', padding: '6px 14px', minWidth: '80px', position: 'relative' } },
                   createElement('span', { style: { fontSize: '18px', fontWeight: '800', color: textColor, lineHeight: '1.1', textAlign: 'center', width: '100%' } }, value),
@@ -1408,9 +1520,61 @@ createElement('div', {},
                 )
               );
             })(),
-            createCheckbox('Show Pitcher Hand (L/R)', 'showPitcherHand'),
-            createCheckbox('Show Only Good Pitches', 'showOnlyGoodPitches', 'toggle-green'),
-            createCheckbox('Show Only Bad Pitches', 'showOnlyBadPitches', 'toggle-red')
+            // Pitcher-hand FILTER: restricts circles + zone stats to one hand
+            createElement('div', { className: 'setting-item' },
+              createElement('label', { className: 'setting-label' }, 'Pitcher Hand'),
+              createElement('div', { style: { display: 'flex', gap: '6px' } },
+                ...[
+                  { value: 'All', label: 'All' },
+                  { value: 'L', label: 'vs LHP' },
+                  { value: 'R', label: 'vs RHP' },
+                ].map(opt => {
+                  const isActive = CURRENT_SETTINGS.pitcherHandFilter === opt.value;
+                  return createElement('button', {
+                    style: {
+                      padding: '6px 12px', borderRadius: '8px', fontWeight: '700', fontSize: '12px',
+                      cursor: 'pointer', transition: 'all 0.15s ease',
+                      border: `2px solid ${isActive ? '#3b82f6' : '#e2e8f0'}`,
+                      background: isActive ? '#3b82f6' : '#f8fafc',
+                      color: isActive ? 'white' : '#64748b'
+                    },
+                    onclick: () => this.updateSetting('pitcherHandFilter', opt.value)
+                  }, opt.label);
+                })
+              )
+            ),
+            // Pitch-type filter: hide pitch types the pitcher doesn't throw
+            (() => {
+              const batterForTypes = (TEAMS_DATA[this.selectedTeam] || [])[this.selectedBatterIndex];
+              const typesPresent = [...new Set((batterForTypes?.pitchZones || []).map(z => z.pitch))].sort();
+              if (typesPresent.length === 0) return null;
+              return createElement('div', { className: 'setting-item' },
+                createElement('label', { className: 'setting-label' }, 'Pitch Types Shown'),
+                createElement('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '6px', justifyContent: 'flex-end' } },
+                  ...typesPresent.map(t => {
+                    const hidden = CURRENT_SETTINGS.hiddenPitchTypes.includes(t);
+                    return createElement('button', {
+                      style: {
+                        padding: '4px 10px', borderRadius: '99px', fontWeight: '700', fontSize: '12px',
+                        cursor: 'pointer', transition: 'all 0.15s ease',
+                        border: `2px solid ${hidden ? '#e2e8f0' : '#3b82f6'}`,
+                        background: hidden ? '#f8fafc' : '#3b82f6',
+                        color: hidden ? '#94a3b8' : 'white',
+                        textDecoration: hidden ? 'line-through' : 'none'
+                      },
+                      onclick: () => {
+                        const next = hidden
+                          ? CURRENT_SETTINGS.hiddenPitchTypes.filter(x => x !== t)
+                          : [...CURRENT_SETTINGS.hiddenPitchTypes, t];
+                        this.updateSetting('hiddenPitchTypes', next);
+                      }
+                    }, t);
+                  })
+                )
+              );
+            })(),
+            createCheckbox('Green Zones Only', 'showOnlyGoodPitches', 'toggle-green'),
+            createCheckbox('Red Zones Only', 'showOnlyBadPitches', 'toggle-red')
           ),
 
           // Zone Analysis — full width
@@ -1508,12 +1672,13 @@ createElement('div', {},
               createElement('div', { className: 'info-entry__content' },
                 createElement('div', { className: 'info-entry__title' }, 'Strike Zone'),
                 createElement('div', { className: 'info-entry__desc' },
-                  'Green circles = good pitches (whiffs, weak contact). Red circles = bad pitches (hard contact, balls in play). The batter icon shows their batting stance. The small L or R indicates if the pitch was thrown by a Left-Handed or Right-Handed pitcher.'
+                  'Each circle is one pitch, colored by how the batter hits in that zone. Green = the batter\'s hit rate there is 25%+ below his overall rate (attack here). Red = 25%+ above (avoid). Gray = near his average, or too few pitches to judge. The small L or R shows the pitcher\'s hand; the view is the pitcher\'s perspective.'
                 ),
                 ...makeInfoExpand(
-                  createElement('p', {}, createElement('strong', {}, 'Green:'), ' Pitcher won — whiff, called strike, weak contact (< 70 mph exit velo), or foul ball.'),
-                  createElement('p', {}, createElement('strong', {}, 'Red:'), ' Batter won — hard contact (95+ mph) or ball put in play for a hit/out that favored the hitter.'),
-                  createElement('p', {}, 'Larger circles = more recently thrown pitches in the session. Hover any circle to see full zone stats: total pitches, whiffs, takes, contact outs, contact hits, and fouls.')
+                  createElement('p', {}, createElement('strong', {}, 'Green:'), ' Zone hit rate (contact hits ÷ total pitches in the zone) is 25% or more BELOW the batter\'s overall hits-per-pitch rate — good for the pitcher.'),
+                  createElement('p', {}, createElement('strong', {}, 'Red:'), ' Zone hit rate is 25% or more ABOVE the batter\'s overall rate — bad for the pitcher.'),
+                  createElement('p', {}, createElement('strong', {}, 'Gray:'), ' Within ±25% of the batter\'s average, or fewer than 5 pitches in the zone (low sample).'),
+                  createElement('p', {}, 'The Max Pitches Displayed slider reveals circles from the most extreme zones (furthest above or below the batter\'s average) toward the average. Hover any circle for the zone\'s full breakdown: pitch counts, hit rate, and the batter\'s overall rate. Use the settings panel to filter by pitcher hand or pitch type.')
                 ),
                 createElement('div', { className: 'pitch-badge-row' },
                   ...[
@@ -1574,7 +1739,7 @@ createElement('div', {},
                   'The most common pitch sequences that historically get this batter out — groundouts, flyouts, strikeouts. Use this as your blueprint.'
                 ),
                 ...makeInfoExpand(
-                  createElement('p', {}, 'Analyzes the last 2–3 pitches of every plate appearance that ended in an out. The most frequent pitch or sequence wins.'),
+                  createElement('p', {}, 'Analyzes the final two pitches (setup pitch → out pitch) of every plate appearance that ended in an out. The most frequent sequence wins.'),
                   createElement('p', {}, 'A single pitch (e.g. "SL") is the out pitch itself. An arrow sequence (e.g. "4S → SL") shows the setup pitch followed by the out pitch.'),
                   createElement('p', {},
                     createElement('strong', {}, 'K↩'), ' = strikeout swinging (swing and miss). ',
@@ -1659,22 +1824,27 @@ createElement('div', {},
 
         // NOW read the freshly-updated app.allowedZones
         const rawZones = data.pitchZones || [];
-        const fullyFilteredPitches = getFullyFilteredPitches(rawZones);
+        const activeZA = getActiveZoneAnalysis(data);
+        const ratingCtx = computeZoneRatings(activeZA);
+        const annotatedZones = annotatePitchRatings(rawZones, ratingCtx);
+        const fullyFilteredPitches = getFullyFilteredPitches(annotatedZones);
         this._tendenciesEl = tendenciesEl;
+        this._activeZoneAnalysis = activeZA;
+        this._ratingCtx = ratingCtx;
         this._fullyFilteredPitches = fullyFilteredPitches;
         this._rawZoneCount = rawZones.length;
         this._statsTotalPitches = data.stats?.totalPitches || rawZones.length;
-        const countSource = CURRENT_SETTINGS.showAllZones ? rawZones : fullyFilteredPitches;
-        this._goodCount = countSource.filter(z => z.good === true).length;
-        this._badCount = countSource.filter(z => z.good === false).length;
+        const countSource = CURRENT_SETTINGS.showAllZones ? annotatedZones : fullyFilteredPitches;
+        this._goodCount = countSource.filter(z => z.rating === 'green').length;
+        this._badCount = countSource.filter(z => z.rating === 'red').length;
         const displayedSlice = fullyFilteredPitches.slice(0, CURRENT_SETTINGS.maxPitchesDisplayed);
         this._displayedCount = displayedSlice.length;
-        this._displayedGoodCount = displayedSlice.filter(z => z.good === true).length;
-        this._displayedBadCount = displayedSlice.filter(z => z.good === false).length;
+        this._displayedGoodCount = displayedSlice.filter(z => z.rating === 'green').length;
+        this._displayedBadCount = displayedSlice.filter(z => z.rating === 'red').length;
       })(),
       (!this.isSettingsDocked && this.showSettingsPanel) ? this.renderSettingsPanel(this._rawZoneCount, this._fullyFilteredPitches.length, this._goodCount, this._badCount, this._displayedCount, this._displayedGoodCount, this._displayedBadCount, this._statsTotalPitches) : null,
       (() => {
-        const { el: pitchZoneInner, count: renderedCount, available: availableCount } = createPitchZone(this._fullyFilteredPitches, data.handedness, data.zoneAnalysis);
+        const { el: pitchZoneInner, count: renderedCount, available: availableCount } = createPitchZone(this._fullyFilteredPitches, data.handedness, this._activeZoneAnalysis, this._ratingCtx);
         const pitchZoneEl = createElement('div', { className: 'pitch-zone-section' }, pitchZoneInner);
         const batterEl = createBatterGraphic(data.handedness, data.batter, renderedCount, availableCount);
 

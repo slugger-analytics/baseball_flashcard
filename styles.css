@@ -675,8 +675,10 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
 }
 
 .batter-graphic {
-  width: clamp(150px, 20vw, 300px);
-  height: auto;
+  /* Sized against the strike zone (mockup proportions): the silhouette stands
+     as tall as the zone and close to its width, instead of a small side icon */
+  width: clamp(200px, 28vw, 340px);
+  height: var(--pitch-height);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -793,6 +795,12 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
 .pitch-circle--bad {
   background: linear-gradient(135deg, var(--bad) 0%, #dc2626 100%);
   border-color: #fca5a5;
+}
+
+/* Zone is near the batter's average, or too few pitches to rate */
+.pitch-circle--neutral {
+  background: linear-gradient(135deg, #94a3b8 0%, #64748b 100%);
+  border-color: #cbd5e1;
 }
 
 .batter-section { display: none; }
@@ -964,6 +972,11 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
   color: #fff;
 }
 
+.zone-tooltip-pill--neutral {
+  background: #64748b;
+  color: #fff;
+}
+
 .zone-tooltip-pill--hand {
   background: #3b82f6;
   color: #fff;
@@ -985,6 +998,16 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
 .zone-tooltip-table td:last-child {
   text-align: right;
   font-weight: 600;
+}
+
+.zone-tooltip-table tr.zone-tooltip-rate td {
+  border-top: 1px solid #334155;
+  color: #7dd3fc;
+  font-weight: 700;
+}
+
+.zone-tooltip-table tr.zone-tooltip-rate + tr.zone-tooltip-rate td {
+  border-top: none;
 }
 
 /* ── Out Pitch outcome breakdown row ─────────────────── */
@@ -1833,10 +1856,11 @@ button:active {
   padding: 16px 0; 
 }
 
-/* C1: Restore batter graphic in print — show at a small fixed width */
+/* C1: Batter graphic in print — proportional to the zone (kept in sync with
+   the @media print rules below, which win at actual print time) */
 .print-widget .batter-graphic {
   display: flex !important;
-  width: 80px !important;
+  width: 240px !important;
   height: auto !important;
   flex-shrink: 0 !important;
   align-self: center !important;
@@ -1983,11 +2007,11 @@ button:active {
     border: 2px solid #888888 !important;
   }
 
-  /* C1: Batter graphic in print */
+  /* C1: Batter graphic in print — proportional to the zone (mockup ratio) */
   .print-widget .batter-graphic {
     display: flex !important;
-    width: 12% !important;
-    max-width: 80pt !important;
+    width: 30% !important;
+    max-width: 250pt !important;
     height: auto !important;
     flex-shrink: 0 !important;
     align-self: center !important;

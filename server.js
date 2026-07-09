@@ -441,7 +441,7 @@ function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 9
         pitcherThrows: pitch.pitcher_throws === 'Left' ? 'LHP' : 'RHP',
         context: `${pitch.top_or_bottom || 'Top'} ${pitch.inning || 1}, ${pitch.balls || 0}-${pitch.strikes || 0}`,
         battingOrder: pitch.pa_of_inning || teamsData[teamName].length + 1,
-        pitchZones: [], zoneAnalysis: {},
+        pitchZones: [], zoneAnalysis: {}, zoneAnalysisByHand: { L: {}, R: {} },
         stats: { totalPitches: 0, strikes: 0, balls: 0, swings: 0, contact: 0, fouls: 0, whiffs: 0, firstPitchPitches: 0, firstPitchSwings: 0, weakContact: 0, hardContact: 0 },
         plateAppearances: [], atBats: [], stolenBases: 0, caughtStealing: 0, bunts: 0,
         strikeoutSequences: [], strikeoutDetails: [], outSequences: [],
@@ -494,12 +494,10 @@ function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 9
         pitch.k_or_bb === 'Strikeout';
 
       if (isOut && currentPA.pitches.length >= 2) {
-        // Get the last 2-3 pitches that led to this out
-        const sequence = currentPA.pitches.slice(-3).map(p => p.type).join(' → ');
+        // The final two pitches that led to this out (setup pitch → out pitch)
         const shortSeq = currentPA.pitches.slice(-2).map(p => p.type).join(' → ');
 
         batterData.outSequences.push({
-          sequence: sequence,
           shortSequence: shortSeq,
           outType: pitch.k_or_bb === 'Strikeout' ? 'K' : pitch.play_result,
           wasSwinging: pitch.pitch_call === 'StrikeSwinging',
@@ -524,10 +522,8 @@ function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 9
     // Strikeouts in Trackman often have no play_result — capture them for outSequences separately
     if (pitch.k_or_bb === 'Strikeout' && currentPA.pitches.length >= 2 &&
         !(pitch.play_result && pitch.play_result !== 'Undefined')) {
-      const sequence = currentPA.pitches.slice(-3).map(p => p.type).join(' → ');
       const shortSeq = currentPA.pitches.slice(-2).map(p => p.type).join(' → ');
       batterData.outSequences.push({
-        sequence: sequence,
         shortSequence: shortSeq,
         outType: 'K',
         wasSwinging: pitch.pitch_call === 'StrikeSwinging',
@@ -561,27 +557,34 @@ function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 9
 
     if (pitch.plate_loc_side !== null && pitch.plate_loc_height !== null) {
       const zone = getZoneFromLocation(pitch.plate_loc_side, pitch.plate_loc_height, batterData.handedness);
-      if (!batterData.zoneAnalysis[zone]) {
-        batterData.zoneAnalysis[zone] = { pitches: 0, swings: 0, whiffs: 0, fouls: 0, weakContact: 0, hardHits: 0, contact: 0, takes: 0, contactOuts: 0, contactHits: 0 };
-      }
+      const pitcherHand = pitch.pitcher_throws === 'Left' ? 'L' : 'R';
+      const emptyZoneStats = () => ({ pitches: 0, swings: 0, whiffs: 0, fouls: 0, weakContact: 0, hardHits: 0, contact: 0, takes: 0, contactOuts: 0, contactHits: 0 });
+      if (!batterData.zoneAnalysis[zone]) batterData.zoneAnalysis[zone] = emptyZoneStats();
+      if (!batterData.zoneAnalysisByHand[pitcherHand][zone]) batterData.zoneAnalysisByHand[pitcherHand][zone] = emptyZoneStats();
 
-      const zoneStats = batterData.zoneAnalysis[zone];
-      zoneStats.pitches++;
-      if (['StrikeSwinging', 'FoulBall', 'FoulBallFieldable', 'FoulBallNotFieldable', 'InPlay'].includes(pitch.pitch_call)) zoneStats.swings++;
-      if (pitch.pitch_call === 'StrikeSwinging') zoneStats.whiffs++;
-      if (['FoulBall', 'FoulBallFieldable', 'FoulBallNotFieldable'].includes(pitch.pitch_call)) zoneStats.fouls++;
-      if (['FoulBall', 'FoulBallFieldable', 'FoulBallNotFieldable', 'InPlay'].includes(pitch.pitch_call)) zoneStats.contact++;
-      if (['BallCalled', 'StrikeCalled'].includes(pitch.pitch_call)) zoneStats.takes++;
-      if (pitch.exit_speed && pitch.pitch_call === 'InPlay') {
-        if (pitch.exit_speed >= 95) zoneStats.hardHits++;
-        else if (pitch.exit_speed < 70) zoneStats.weakContact++;
-      }
-      if (pitch.pitch_call === 'InPlay' && pitch.play_result) {
-        if (['Out', 'FieldersChoice', 'Sacrifice'].includes(pitch.play_result)) zoneStats.contactOuts++;
-        else if (['Single', 'Double', 'Triple', 'HomeRun'].includes(pitch.play_result)) zoneStats.contactHits++;
-      }
+      // Combined stats drive the default view; the per-hand copies feed the
+      // vs-LHP / vs-RHP pitcher-hand filter in the frontend.
+      [batterData.zoneAnalysis[zone], batterData.zoneAnalysisByHand[pitcherHand][zone]].forEach(zoneStats => {
+        zoneStats.pitches++;
+        if (['StrikeSwinging', 'FoulBall', 'FoulBallFieldable', 'FoulBallNotFieldable', 'InPlay'].includes(pitch.pitch_call)) zoneStats.swings++;
+        if (pitch.pitch_call === 'StrikeSwinging') zoneStats.whiffs++;
+        if (['FoulBall', 'FoulBallFieldable', 'FoulBallNotFieldable'].includes(pitch.pitch_call)) zoneStats.fouls++;
+        if (['FoulBall', 'FoulBallFieldable', 'FoulBallNotFieldable', 'InPlay'].includes(pitch.pitch_call)) zoneStats.contact++;
+        if (['BallCalled', 'StrikeCalled'].includes(pitch.pitch_call)) zoneStats.takes++;
+        if (pitch.exit_speed && pitch.pitch_call === 'InPlay') {
+          if (pitch.exit_speed >= 95) zoneStats.hardHits++;
+          else if (pitch.exit_speed < 70) zoneStats.weakContact++;
+        }
+        if (pitch.pitch_call === 'InPlay' && pitch.play_result) {
+          if (['Out', 'FieldersChoice', 'Sacrifice'].includes(pitch.play_result)) zoneStats.contactOuts++;
+          else if (['Single', 'Double', 'Triple', 'HomeRun'].includes(pitch.play_result)) zoneStats.contactHits++;
+        }
+      });
 
-      const xPos = 50 + (pitch.plate_loc_side * 25);
+      // Pitcher's perspective: the batter silhouette flanks the zone as the
+      // pitcher sees it (LHB left of the zone, RHB right), so positive
+      // plate_loc_side (catcher's right) must render on the LEFT of the graphic.
+      const xPos = 50 - (pitch.plate_loc_side * 25);
       const yPos = 100 - ((pitch.plate_loc_height - 1.5) / 2 * 100);
       let isGoodPitch = false;
       if (pitch.pitch_call === 'StrikeSwinging' || pitch.pitch_call === 'StrikeCalled') isGoodPitch = true;
@@ -590,9 +593,14 @@ function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 9
       else if (pitch.pitch_call === 'BallCalled' || (pitch.exit_speed && pitch.exit_speed >= 95) || pitch.pitch_call === 'InPlay') isGoodPitch = false;
 
       batterData.pitchZones.push({
-        position: [Math.max(0, Math.min(100, xPos)), Math.max(0, Math.min(100, yPos))],
+        // One decimal of position precision is plenty for a %-based layout and
+        // keeps the JSON payload well under the ALB 1 MB response limit.
+        position: [
+          Math.round(Math.max(0, Math.min(100, xPos)) * 10) / 10,
+          Math.round(Math.max(0, Math.min(100, yPos)) * 10) / 10
+        ],
         pitch: pitchType, good: isGoodPitch, zone: zone,
-        pitcherThrows: pitch.pitcher_throws === 'Left' ? 'L' : 'R'
+        pitcherThrows: pitcherHand
       });
     }
   });
@@ -646,13 +654,11 @@ function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 9
 
           const total = outSequences.length;
 
-          // Count all sequences (both 2-pitch and 3-pitch)
+          // Count each out's two-pitch sequence (setup pitch → out pitch)
           const sequenceCounts = {};
 
           outSequences.forEach(out => {
-            // Prefer 3-pitch sequences if available
-            const seq = out.pitchCount >= 3 ? out.sequence : out.shortSequence;
-            sequenceCounts[seq] = (sequenceCounts[seq] || 0) + 1;
+            sequenceCounts[out.shortSequence] = (sequenceCounts[out.shortSequence] || 0) + 1;
           });
 
           // Find sequences that appear at least twice OR represent 30%+ of outs
@@ -690,10 +696,7 @@ function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 9
               }
             }
 
-            const matchingOuts = outSequences.filter(out => {
-              const seq = out.pitchCount >= 3 ? out.sequence : out.shortSequence;
-              return seq === topSeq;
-            });
+            const matchingOuts = outSequences.filter(out => out.shortSequence === topSeq);
             return { text, breakdown: buildBreakdown(topSeq, matchingOuts) };
           }
 
@@ -731,7 +734,7 @@ function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 9
   // UI consumes.
   const RESPONSE_FIELDS = [
     'batter', 'handedness', 'jerseyNumber',
-    'stats', 'pitchZones', 'zoneAnalysis',
+    'stats', 'pitchZones', 'zoneAnalysis', 'zoneAnalysisByHand',
     'tendencies', 'powerSequence', 'powerSequenceBreakdown',
   ];
   const slimData = {};
