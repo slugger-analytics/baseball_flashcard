@@ -13,16 +13,15 @@ const DEFAULT_SETTINGS = {
   maxPitchesDisplayed: 4,
   showOnlyGoodPitches: false,
   showOnlyBadPitches: false,
-  showAllZones: false,
   pitcherHandFilter: 'All',   // 'All' | 'L' | 'R' — restrict circles to one pitcher hand
   hiddenPitchTypes: [],       // pitch abbreviations (e.g. 'SL') currently hidden from the grid
+  bucketMinPitches: 3,        // (pitch type × zone) buckets under this size are dropped from the grid
   pitchCircleSize: 38
 };
 let CURRENT_SETTINGS = { ...DEFAULT_SETTINGS };
 
 // Tracks which expandable info sections are open
 const EXPANDED_SECTIONS = {
-  confidenceInfo: false,
   firstPitch: false,
   outPitch: false,
   threats: false,
@@ -123,119 +122,94 @@ function createElement(tag, props = {}, ...children) {
   return el;
 }
 /**
- * Zone color model: a zone's hit rate (contact hits per pitch thrown there) is
- * compared against the batter's overall hits-per-pitch rate across all zones.
- * 25%+ below overall = green (good for the pitcher — attack here), 25%+ above
- * overall = red (bad for the pitcher — avoid). Zones inside that band, or with
- * fewer than ZONE_RATING_MIN_PITCHES pitches, stay neutral gray.
+ * Bucket color model: pitches are grouped into (pitch type × zone) buckets —
+ * e.g. "sliders in Low-In". Each bucket's hit rate (contact hits per pitch)
+ * is compared against the batter's overall hits-per-pitch rate over the same
+ * (hand-filtered) pitch population. 25%+ below overall = green (good for the
+ * pitcher — attack here), 25%+ above = red (avoid), inside the band = gray.
+ * Buckets with fewer than the user-set Min Pitches per Bucket are eliminated
+ * from the grid entirely — too small a sample to trust either way.
  */
-const ZONE_RATING_MIN_PITCHES = 5;
-const ZONE_RATING_EDGE = 0.25;
+const BUCKET_RATING_EDGE = 0.25;
+
+function bucketKey(p) { return `${p.pitch}|${p.zone}`; }
 
 /**
- * Rates every zone in a zoneAnalysis map against the batter's overall hit rate.
- * @param {Object} zoneAnalysis - Map of zone key → per-zone counting stats.
- * @returns {{ ratings: Object, overallRate: number|null }} Per-zone
- *   { rating: 'green'|'red'|'neutral', rate, extremity } plus the overall rate.
+ * Buckets a pitch population by (pitch type × zone) and rates each bucket
+ * against the batter's overall hit rate over that population.
+ * @param {Array<Object>} pitches - pitchZone objects ({ pitch, zone, outcome, ... }).
+ * @returns {{ buckets: Object, overallRate: number|null }} Bucket map keyed by
+ *   bucketKey → { total, hit, out, whiff, take, foul, other, rate, rating,
+ *   extremity, eliminated }, plus the population's overall hits-per-pitch.
  */
-function computeZoneRatings(zoneAnalysis) {
-  const ratings = {};
-  if (!zoneAnalysis) return { ratings, overallRate: null };
-
-  let totalHits = 0, totalPitches = 0;
-  Object.values(zoneAnalysis).forEach(s => {
-    totalHits += s.contactHits || 0;
-    totalPitches += s.pitches || 0;
+function computeBucketRatings(pitches) {
+  const buckets = {};
+  let totalHits = 0;
+  pitches.forEach(p => {
+    const k = bucketKey(p);
+    if (!buckets[k]) buckets[k] = { pitch: p.pitch, zone: p.zone, total: 0, hit: 0, out: 0, whiff: 0, take: 0, foul: 0, other: 0 };
+    const b = buckets[k];
+    b.total++;
+    if (b[p.outcome] !== undefined && p.outcome !== 'total') b[p.outcome]++;
+    else b.other++;
+    if (p.outcome === 'hit') totalHits++;
   });
-  const overallRate = totalPitches > 0 ? totalHits / totalPitches : null;
+  const overallRate = pitches.length > 0 ? totalHits / pitches.length : null;
 
-  Object.entries(zoneAnalysis).forEach(([zone, s]) => {
-    const pitches = s.pitches || 0;
-    const rate = pitches > 0 ? (s.contactHits || 0) / pitches : null;
-    let rating = 'neutral';
-    let extremity = -1;
-    if (overallRate > 0 && rate !== null && pitches >= ZONE_RATING_MIN_PITCHES) {
-      if (rate <= overallRate * (1 - ZONE_RATING_EDGE)) rating = 'green';
-      else if (rate >= overallRate * (1 + ZONE_RATING_EDGE)) rating = 'red';
+  Object.values(buckets).forEach(b => {
+    b.rate = b.total > 0 ? b.hit / b.total : null;
+    b.eliminated = b.total < CURRENT_SETTINGS.bucketMinPitches;
+    b.rating = 'neutral';
+    b.extremity = -1;
+    if (!b.eliminated && overallRate > 0 && b.rate !== null) {
+      if (b.rate <= overallRate * (1 - BUCKET_RATING_EDGE)) b.rating = 'green';
+      else if (b.rate >= overallRate * (1 + BUCKET_RATING_EDGE)) b.rating = 'red';
       // Distance from the batter's average, used to reveal extremes first
-      extremity = Math.abs(rate / overallRate - 1);
+      b.extremity = Math.abs(b.rate / overallRate - 1);
     }
-    ratings[zone] = { rating, rate, extremity, pitches };
   });
-  return { ratings, overallRate };
+  return { buckets, overallRate };
 }
 
 /**
- * Picks the zoneAnalysis matching the active pitcher-hand filter.
+ * Builds the drawable pitch list for a batter: applies the pitcher-hand
+ * filter, buckets and rates the population, drops eliminated (under-sample)
+ * buckets and hidden pitch types, applies the green/red-only toggles, and
+ * orders pitches so the most extreme buckets come first — the Max Pitches
+ * slider reveals extremes before average buckets.
  * @param {Object} batterData - A batter object from TEAMS_DATA.
- * @returns {Object} Combined stats for 'All', or the vs-LHP / vs-RHP split.
+ * @returns {{ pitches: Array<Object>, bucketCtx: Object, populationCount: number }}
  */
-function getActiveZoneAnalysis(batterData) {
+function getVisiblePitches(batterData) {
   const hand = CURRENT_SETTINGS.pitcherHandFilter;
-  if (hand === 'L' || hand === 'R') return (batterData.zoneAnalysisByHand || {})[hand] || {};
-  return batterData.zoneAnalysis || {};
-}
+  const population = (batterData.pitchZones || []).filter(z =>
+    (hand === 'L' || hand === 'R') ? z.pitcherThrows === hand : true);
+  const bucketCtx = computeBucketRatings(population);
 
-/**
- * Copies pitch objects with their zone's rating + extremity attached, so the
- * grid, filters, and counters all read the same classification.
- * @param {Array<Object>} zones - Raw pitchZone objects from the server.
- * @param {{ ratings: Object }} ratingCtx - Output of computeZoneRatings.
- * @returns {Array<Object>} Annotated copies ({ ...pitch, rating, extremity }).
- */
-function annotatePitchRatings(zones, ratingCtx) {
-  const ratings = (ratingCtx && ratingCtx.ratings) || {};
-  return (Array.isArray(zones) ? zones : []).map(z => {
-    const info = ratings[z.zone];
-    return { ...z, rating: info ? info.rating : 'neutral', extremity: info ? info.extremity : -1 };
+  let fz = population.map(z => {
+    const b = bucketCtx.buckets[bucketKey(z)];
+    return { ...z, rating: b.rating, extremity: b.extremity, eliminated: b.eliminated };
   });
-}
-
-/**
- * Filters annotated pitches by pitcher hand, pitch type, the weakness-slider
- * whitelist, and the green/red-only toggles, then orders them so the most
- * extreme zones (furthest from the batter's average) come first — the Max
- * Pitches slider reveals extremes before average zones.
- * @param {Array<Object>} zones - Pitches annotated by annotatePitchRatings.
- * @returns {Array<Object>} Filtered, extremity-ordered pitches.
- */
-function getFullyFilteredPitches(zones) {
-  let fz = Array.isArray(zones) ? [...zones] : [];
-  const hand = CURRENT_SETTINGS.pitcherHandFilter;
-  if (hand === 'L' || hand === 'R') {
-    fz = fz.filter(z => z.pitcherThrows === hand);
-  }
+  fz = fz.filter(z => !z.eliminated);
   if (CURRENT_SETTINGS.hiddenPitchTypes.length > 0) {
     fz = fz.filter(z => !CURRENT_SETTINGS.hiddenPitchTypes.includes(z.pitch));
-  }
-  if (!CURRENT_SETTINGS.showAllZones) {
-    const az = (typeof app !== 'undefined' && app?.allowedZones) ?? null;
-    if (az !== null) {
-      if (az.length > 0) {
-        fz = fz.filter(z => z.good === true ? az.includes(z.zone) : true);
-      } else {
-        if (CURRENT_SETTINGS.vulnerableZoneThreshold <= 35) {
-          fz = fz.filter(z => z.good === true);
-        }
-      }
-    }
   }
   if (CURRENT_SETTINGS.showOnlyGoodPitches && !CURRENT_SETTINGS.showOnlyBadPitches) {
     fz = fz.filter(z => z.rating === 'green');
   } else if (CURRENT_SETTINGS.showOnlyBadPitches && !CURRENT_SETTINGS.showOnlyGoodPitches) {
     fz = fz.filter(z => z.rating === 'red');
   }
-  // Stable sort: ties (pitches in the same zone) keep chronological order
+  // Stable sort: ties (pitches in the same bucket) keep chronological order
   fz.sort((a, b) => (b.extremity ?? -1) - (a.extremity ?? -1));
-  return fz;
+  return { pitches: fz, bucketCtx, populationCount: population.length };
 }
-function createPitchZone(preFilteredZones, handedness, zoneAnalysis, ratingCtx) {
+function createPitchZone(preFilteredZones, handedness, bucketCtx) {
   const filteredZones = Array.isArray(preFilteredZones) ? preFilteredZones : [];
   const displayZones = filteredZones.slice(0, CURRENT_SETTINGS.maxPitchesDisplayed);
 
   function showZoneTooltip(circleEl, zone) {
-    const stats = zoneAnalysis && zoneAnalysis[zone.zone];
-    if (!stats) return;
+    const b = bucketCtx && bucketCtx.buckets ? bucketCtx.buckets[bucketKey(zone)] : null;
+    if (!b) return;
     const existing = document.getElementById('zone-hover-tooltip');
     if (existing) existing.remove();
     const tip = document.createElement('div');
@@ -243,35 +217,30 @@ function createPitchZone(preFilteredZones, handedness, zoneAnalysis, ratingCtx) 
     tip.className = 'zone-hover-tooltip';
     const rating = zone.rating || 'neutral';
     const ratingPill = rating === 'green'
-      ? `<span class="zone-tooltip-pill zone-tooltip-pill--good">Green · Attack zone</span>`
+      ? `<span class="zone-tooltip-pill zone-tooltip-pill--good">Green · Attack here</span>`
       : rating === 'red'
-        ? `<span class="zone-tooltip-pill zone-tooltip-pill--bad">Red · Avoid zone</span>`
-        : `<span class="zone-tooltip-pill zone-tooltip-pill--neutral">${(stats.pitches || 0) < ZONE_RATING_MIN_PITCHES ? 'Low sample' : 'Near average'}</span>`;
+        ? `<span class="zone-tooltip-pill zone-tooltip-pill--bad">Red · Avoid here</span>`
+        : `<span class="zone-tooltip-pill zone-tooltip-pill--neutral">Near average</span>`;
     const handPill = zone.pitcherThrows
       ? `<span class="zone-tooltip-pill zone-tooltip-pill--hand">${zone.pitcherThrows}HP</span>`
       : '';
-    const info = ratingCtx && ratingCtx.ratings ? ratingCtx.ratings[zone.zone] : null;
-    const zoneRate = info && info.rate !== null ? `${(info.rate * 100).toFixed(1)}%` : '—';
-    const overallRate = ratingCtx && ratingCtx.overallRate !== null && ratingCtx.overallRate !== undefined
-      ? `${(ratingCtx.overallRate * 100).toFixed(1)}%` : '—';
-    // Anything not in the named buckets (HBP, errors, misc play results) so the
-    // rows below always reconcile with Total
-    const other = Math.max(0, (stats.pitches || 0) - (stats.whiffs || 0) - (stats.takes || 0)
-      - (stats.contactOuts || 0) - (stats.contactHits || 0) - (stats.fouls || 0));
+    const bucketRate = b.rate !== null ? `${(b.rate * 100).toFixed(1)}%` : '—';
+    const overallRate = bucketCtx.overallRate !== null && bucketCtx.overallRate !== undefined
+      ? `${(bucketCtx.overallRate * 100).toFixed(1)}%` : '—';
     tip.innerHTML = `
       <div class="zone-tooltip-header">
-        <span class="zone-tooltip-title">${zone.zone}</span>
+        <span class="zone-tooltip-title">${b.pitch} · ${b.zone}</span>
         <span class="zone-tooltip-pills">${ratingPill}${handPill}</span>
       </div>
       <table class="zone-tooltip-table">
-        <tr><td>Total</td><td>${stats.pitches}</td></tr>
-        <tr><td>Whiff (K↩)</td><td>${stats.whiffs}</td></tr>
-        <tr><td>Take</td><td>${stats.takes}</td></tr>
-        <tr><td>Contact out</td><td>${stats.contactOuts}</td></tr>
-        <tr><td>Contact hit</td><td>${stats.contactHits}</td></tr>
-        <tr><td>Foul</td><td>${stats.fouls}</td></tr>
-        ${other > 0 ? `<tr><td>Other</td><td>${other}</td></tr>` : ''}
-        <tr class="zone-tooltip-rate"><td>Zone hit rate</td><td>${zoneRate}</td></tr>
+        <tr><td>Total</td><td>${b.total}</td></tr>
+        <tr><td>Whiff (K↩)</td><td>${b.whiff}</td></tr>
+        <tr><td>Take</td><td>${b.take}</td></tr>
+        <tr><td>Contact out</td><td>${b.out}</td></tr>
+        <tr><td>Contact hit</td><td>${b.hit}</td></tr>
+        <tr><td>Foul</td><td>${b.foul}</td></tr>
+        ${b.other > 0 ? `<tr><td>Other</td><td>${b.other}</td></tr>` : ''}
+        <tr class="zone-tooltip-rate"><td>Hit rate here</td><td>${bucketRate}</td></tr>
         <tr class="zone-tooltip-rate"><td>Batter overall</td><td>${overallRate}</td></tr>
       </table>`;
     document.body.appendChild(tip);
@@ -483,11 +452,6 @@ const stripPercents = (text) => {
   const hotZoneCap = vulnThreshold <= 20 ? 2 : vulnThreshold <= 35 ? 4 : undefined;
   const cappedHotZones = hotZoneCap !== undefined ? hotZones.slice(0, hotZoneCap) : hotZones;
 
-  if (app) {
-    app.allowedZones = cappedVulnerableZones.map(z => z.zone);
-    app.allowedBadZones = cappedHotZones.length > 0 ? cappedHotZones.map(z => z.zone) : null;
-  }
-  
   // let firstPitchText = stripPercents(tendencies?.firstStrike || `Swings ${firstPitchSwingRate} on first pitch`);
   let firstPitchText = tendencies?.firstStrike || `Swings ${firstPitchSwingRate} on first pitch`;
   let sprayText = tendencies?.spray || 'All fields';
@@ -495,99 +459,7 @@ const stripPercents = (text) => {
   (powerSequence && powerSequence !== 'Calculating...') ? powerSequence : 'Insufficient data'
 );
 
-  // The UI Slider (Aaron part)
-
-  // 3 fixed confidence levels: threshold = max vulnerabilityScore allowed through
-  // Score 0 = most vulnerable (CRITICAL), score 60 = least (MODERATE)
-  const CONFIDENCE_LEVELS = [
-    { label: 'Broad',     desc: 'All Weaknesses',   threshold: 60, minSwings: 3,  color: '#ef4444' },
-    { label: 'Balanced',  desc: 'Critical + Major',  threshold: 35, minSwings: 7,  color: '#f59e0b' },
-    { label: 'Strict',    desc: 'Critical Only',     threshold: 20, minSwings: 10, color: '#22c55e' },
-  ];
-
-const activeLevel = CONFIDENCE_LEVELS.find(l => l.threshold === vulnThreshold) || CONFIDENCE_LEVELS[1];
-  const activeColor = activeLevel.color;
-
-const confidenceSlider = app ? createElement('div', { style: { padding: '16px', background: 'white', borderRadius: '12px', border: '1px solid var(--border)', marginBottom: '16px', boxShadow: 'var(--shadow-sm)' } },
-    createElement('div', { style: { marginBottom: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' } },
-      createElement('div', { style: { display: 'inline-flex', alignItems: 'center', gap: '7px', background: '#f1f5f9', border: '1px solid #e2e8f0', borderRadius: '99px', padding: '5px 14px' } },
-        createElement('span', { style: { width: '12px', height: '12px', borderRadius: '50%', border: `2.5px solid ${activeColor}`, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: '0' } },
-          createElement('span', { style: { width: '3px', height: '3px', borderRadius: '50%', background: activeColor, display: 'block' } })
-        ),
-        createElement('span', { style: { fontSize: '11px', fontWeight: '700', color: '#475569', letterSpacing: '0.09em', textTransform: 'uppercase' } }, 'Weakness Confidence')
-      ),
-      createElement('button', {
-        className: 'section-info-btn',
-        title: 'What is Weakness Confidence?',
-        onclick: (e) => { e.stopPropagation(); openInfoModal('weakness-confidence'); }
-      }, 'ℹ')
-    ),
-    createElement('div', { style: { display: 'flex', gap: '8px' } },
-      ...CONFIDENCE_LEVELS.map(level => {
-        const isActive = !CURRENT_SETTINGS.showAllZones && level.threshold === vulnThreshold && level.minSwings === CURRENT_SETTINGS.vulnerableZoneMinSwings;
-        return createElement('button', {
-          style: {
-            flex: '1',
-            padding: '8px 4px',
-            borderRadius: '8px',
-            border: `2px solid ${isActive ? level.color : '#e2e8f0'}`,
-            background: isActive ? level.color : '#f8fafc',
-            color: isActive ? 'white' : '#64748b',
-            fontWeight: '700',
-            fontSize: '12px',
-            cursor: 'pointer',
-            transition: 'all 0.15s ease',
-            lineHeight: '1.3',
-          },
-          onclick: () => { CURRENT_SETTINGS.vulnerableZoneThreshold = level.threshold; CURRENT_SETTINGS.vulnerableZoneMinSwings = level.minSwings; app.render(); }
-        },
-          createElement('div', {}, level.label),
-          createElement('div', { style: { fontSize: '10px', fontWeight: '500', opacity: isActive ? '0.9' : '0.7' } }, level.desc)
-        );
-      })
-    )
-  ) : null;
-
-  // ------- CONFIDENCE SLIDER START OLD -------
-  /*
-  const confidenceSlider = app ? createElement('div', { style: { padding: '12px', background: '#f8fafc', borderRadius: '12px', border: '1px solid var(--border)', marginBottom: '12px' } },
-    createElement('div', { style: { display: 'flex', justifyContent: 'space-between', marginBottom: '8px' } },
-      createElement('span', { style: { fontSize: '14px', fontWeight: '700', color: 'var(--text)' } }, 'Weakness Confidence'),
-      // Added an ID here so we can update the number smoothly
-      createElement('span', { id: 'slider-value-display', style: { fontSize: '14px', fontWeight: '800', color: 'var(--accent)' } }, vulnThreshold)
-    ),
-    createElement('input', {
-      type: 'range', min: '0', max: '100', step: '1',
-      value: vulnThreshold,
-      className: 'setting-slider',
-      style: { width: '100%', cursor: 'pointer' },
-      oninput: (e) => {
-        app.updateSetting('vulnerableZoneThreshold', parseInt(e.target.value, 10));
-      }
-    }),
-
-    createElement('div', { style: { fontSize: '11px', color: 'var(--muted)', textAlign: 'center', marginTop: '4px' } },
-      vulnThreshold >= 75 ? 'Strict — Critical only' :
-      vulnThreshold >= 50 ? 'Balanced — Critical + Major' :
-      'Broad — All weaknesses shown'
-    )
-  ) : null;
-*/
-  // ------- CONFIDENCE SLIDER END -------
-
-  const confidenceWidget = createElement('div', { className: 'confidence-widget' },
-    CURRENT_SETTINGS.showAllZones
-      ? createElement('div', {
-          style: { position: 'relative', borderRadius: '12px', cursor: 'not-allowed' },
-          title: 'Weakness Confidence is disabled when the "Bypass Filter ⚠️" is ON'
-        },
-          createElement('div', { style: { opacity: '0.3', pointerEvents: 'none', filter: 'grayscale(1)' }, title: 'Weakness Confidence is disabled when the "Bypass Filter ⚠️" is ON' }, confidenceSlider),
-          createElement('span', { style: { position: 'absolute', top: '-6px', right: '-6px', fontSize: '14px', lineHeight: '1' }, title: 'Weakness Confidence is disabled when the "Bypass Filter ⚠️" is ON' }, '🔒')
-        )
-      : confidenceSlider
-  );
   return createElement('div', { className: 'info-section' },
-    confidenceWidget,
     createElement('div', { className: 'power-sequence stats-box' },
       createElement('h4', { style: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' } },
         'First-Pitch Approach',
@@ -656,7 +528,8 @@ class FlashcardApp {
     this.selectedBatterIndex = 0;
     this.showInfoPanel = false;
     this.showSettingsPanel = false;
-    this.isSettingsDocked = false;
+    // Settings live in an always-visible docked sidebar by default (never printed)
+    this.isSettingsDocked = true;
     this.sortBy = 'number';
     this.sortOrder = 'asc';
     const defaults = getDefaultSeasonDates();
@@ -696,10 +569,8 @@ buildPrintPage(batter, teamName, orderIndex) {
       )
     );
     
-    const printRatingCtx = computeZoneRatings(getActiveZoneAnalysis(batter));
-    const { el: pitchZoneInnerPrint } = createPitchZone(
-      getFullyFilteredPitches(annotatePitchRatings(batter.pitchZones || [], printRatingCtx)),
-      batter.handedness, null, printRatingCtx);
+    const { pitches: printPitches, bucketCtx: printBucketCtx } = getVisiblePitches(batter);
+    const { el: pitchZoneInnerPrint } = createPitchZone(printPitches, batter.handedness, printBucketCtx);
     
     // THE iOS PRINT HACK: BUILD A PURE HTML GRID RIGHT BEFORE PRINTING
     const zoneEl = pitchZoneInnerPrint.querySelector('.pitch-zone');
@@ -811,11 +682,8 @@ printCurrentCard() {
     if (!lineup) return;
     const data = lineup[this.selectedBatterIndex];
     if (!data) return;
-    const activeZA = getActiveZoneAnalysis(data);
-    const ratingCtx = computeZoneRatings(activeZA);
-    const { el } = createPitchZone(
-      getFullyFilteredPitches(annotatePitchRatings(data.pitchZones || [], ratingCtx)),
-      data.handedness, activeZA, ratingCtx);
+    const { pitches: visiblePitches, bucketCtx } = getVisiblePitches(data);
+    const { el } = createPitchZone(visiblePitches, data.handedness, bucketCtx);
     pzSection.innerHTML = '';
     pzSection.appendChild(el);
   }
@@ -835,6 +703,10 @@ printCurrentCard() {
    * @returns {Promise<void>}
    */
   async loadDataRange(startDate, endDate, maxVelocity = 105, seasonYear = null, pitchGroup = 'All', dateLabel = null) {
+    // Ranges beyond ~2 months exceed current server capacity; used to show a
+    // clear message instead of a raw 502 when the season-to-date load fails.
+    const spanDays = Math.round((new Date(endDate) - new Date(startDate)) / 86400000);
+    const tooLargeMessage = 'This date range is bigger than the server can currently process in one load. Ranges up to about 2 months work — a fix for full-season loads is in progress.';
 try {
       this.currentScreen = 'loading';
 
@@ -880,7 +752,9 @@ try {
           this.noDataError = `No pitch data found for the velocity range you selected (≤${maxVelocity} MPH). Try increasing the maximum velocity.`;
           this.currentScreen = 'dateSelect';
         } else {
-          this.error = data.message || `Error loading data (${response.status})`;
+          this.error = spanDays > 65
+            ? tooLargeMessage
+            : (data.message || `Error loading data (${response.status})`);
           this.currentScreen = 'error';
         }
 
@@ -906,7 +780,7 @@ try {
     } catch (err) {
       console.error(err);
       this.currentScreen = 'error';
-      this.error = `Error loading data: ${err.message}`;
+      this.error = spanDays > 65 ? tooLargeMessage : `Error loading data: ${err.message}`;
       this.render();
     }
   }
@@ -1231,6 +1105,24 @@ createElement('div', {},
             'Quick Options'
           ),
           createElement('div', { style: { display: 'flex', gap: '10px', justifyContent: 'center', flexWrap: 'wrap' } },
+            // Primary/default load: full-width, Deep Navy, labeled as the default
+            createElement('button', {
+              className: 'team-btn',
+              style: { padding: '12px 10px', fontSize: '15px', flexBasis: '100%', background: 'rgb(26, 71, 143)', border: 'none', boxShadow: 'none' },
+              onclick: () => this.fetchSmartData(null)
+            },
+              ...(() => {
+                const fs = getFullSeasonRange();
+                const todayStr = new Date().toISOString().slice(0, 10);
+                const inSeason = fs.year === 2026 && fs.end === todayStr;
+                return [
+                  createElement('div', { style: { fontWeight: '700' } },
+                    inSeason ? '2026 Season to Date' : `Full ${fs.year} Season`),
+                  createElement('div', { style: { fontSize: '11px', fontWeight: '500', opacity: '0.85', marginTop: '2px' } },
+                    inSeason ? 'Default · opening day through today' : 'Default · full season')
+                ];
+              })()
+            ),
             createElement('button', {
               // Uses standard "Load Custom Range" blue
               className: 'team-btn', style: { padding: '8px 10px', fontSize: '13px', flex: 1, minWidth: '130px' },
@@ -1241,17 +1133,6 @@ createElement('div', {},
               className: 'team-btn', style: { padding: '8px 10px', fontSize: '13px', flex: 1, minWidth: '130px' },
               onclick: () => this.fetchSmartData(30)
             }, 'Load Last 30 Days'),
-            createElement('button', {
-              // Deep Navy to match the "Filter Trackman Data" Title
-              className: 'team-btn', style: { padding: '8px 10px', fontSize: '13px', flex: 1, minWidth: '130px', background: 'rgb(26, 71, 143)', border: 'none', boxShadow: 'none' },
-              onclick: () => this.fetchSmartData(null)
-            }, (() => {
-              const fs = getFullSeasonRange();
-              const todayStr = new Date().toISOString().slice(0, 10);
-              return fs.year === 2026 && fs.end === todayStr
-                ? 'Load 2026 Season (to date)'
-                : `Load Full ${fs.year} Season`;
-            })()),
           )
         )
       )
@@ -1395,7 +1276,7 @@ createElement('div', {},
     );
   }
   renderSettingsPanel(rawCount = 0, filteredCount = 0, goodCount = 0, badCount = 0, displayedCount = 0, displayedGoodCount = 0, displayedBadCount = 0, statsTotalPitches = 0, docked = false) {
-    const sliderMax = CURRENT_SETTINGS.showAllZones ? rawCount : filteredCount;
+    const sliderMax = filteredCount;
     // Compute effective display value without mutating the setting — slice(0, N) handles the real cap naturally
     const effectiveMaxPitches = Math.min(CURRENT_SETTINGS.maxPitchesDisplayed, sliderMax);
     const createSlider = (label, key, min, max, step = 1, displayValue = undefined) => {
@@ -1501,25 +1382,8 @@ createElement('div', {},
             ),
             createSlider('Max Pitches Displayed', 'maxPitchesDisplayed', 0, sliderMax, 1, effectiveMaxPitches),
             createSlider('Pitch Circle Size (px)', 'pitchCircleSize', 28, 56, 1),
-            (() => {
-              const _bypassLocked = cachedDateRange.pitchGroup && cachedDateRange.pitchGroup !== 'All';
-              if (_bypassLocked && CURRENT_SETTINGS.showAllZones) CURRENT_SETTINGS.showAllZones = false;
-              if (!_bypassLocked) return createCheckbox('Show All Zones (Bypass Filter ⚠️)', 'showAllZones', 'toggle-yellow');
-              return createElement('div', {
-                className: 'setting-item',
-                title: 'Cannot show all zones while a pitch type filter (Fastballs, Breaking Balls, or Offspeed) is active',
-                style: { cursor: 'not-allowed' }
-              },
-                createElement('label', { className: 'setting-label', style: { opacity: '0.4' }, title: 'Cannot show all zones while a pitch type filter (Fastballs, Breaking Balls, or Offspeed) is active' }, 'Show All Zones (Bypass Filter ⚠️)'),
-                createElement('div', { style: { position: 'relative', display: 'inline-flex', alignItems: 'center' }, title: 'Cannot show all zones while a pitch type filter (Fastballs, Breaking Balls, or Offspeed) is active' },
-                  createElement('label', { className: 'toggle-switch', style: { opacity: '0.35', pointerEvents: 'none' }, title: 'Cannot show all zones while a pitch type filter (Fastballs, Breaking Balls, or Offspeed) is active' },
-                    createElement('input', { type: 'checkbox', checked: false, className: 'toggle-input', disabled: true }),
-                    createElement('span', { className: 'toggle-track toggle-yellow' })
-                  ),
-                  createElement('span', { style: { position: 'absolute', top: '-6px', right: '-8px', fontSize: '13px', lineHeight: '1' }, title: 'Cannot show all zones while a pitch type filter (Fastballs, Breaking Balls, or Offspeed) is active' }, '🔒')
-                )
-              );
-            })(),
+            // Buckets = pitch type × zone; buckets under this size are dropped
+            createSlider('Min Pitches per Bucket', 'bucketMinPitches', 1, 20, 1),
             // Pitcher-hand FILTER: restricts circles + zone stats to one hand
             createElement('div', { className: 'setting-item' },
               createElement('label', { className: 'setting-label' }, 'Pitcher Hand'),
@@ -1672,13 +1536,14 @@ createElement('div', {},
               createElement('div', { className: 'info-entry__content' },
                 createElement('div', { className: 'info-entry__title' }, 'Strike Zone'),
                 createElement('div', { className: 'info-entry__desc' },
-                  'Each circle is one pitch, colored by how the batter hits in that zone. Green = the batter\'s hit rate there is 25%+ below his overall rate (attack here). Red = 25%+ above (avoid). Gray = near his average, or too few pitches to judge. The small L or R shows the pitcher\'s hand; the view is the pitcher\'s perspective.'
+                  'Each circle is one pitch. Pitches are grouped into buckets by pitch type and zone (e.g. sliders in Low-In), and the circle\'s color rates its bucket: green = the batter\'s hit rate on that pitch type in that zone is 25%+ below his overall rate (attack here). Red = 25%+ above (avoid). Gray = near his average. The small L or R shows the pitcher\'s hand; the view is the pitcher\'s perspective.'
                 ),
                 ...makeInfoExpand(
-                  createElement('p', {}, createElement('strong', {}, 'Green:'), ' Zone hit rate (contact hits ÷ total pitches in the zone) is 25% or more BELOW the batter\'s overall hits-per-pitch rate — good for the pitcher.'),
-                  createElement('p', {}, createElement('strong', {}, 'Red:'), ' Zone hit rate is 25% or more ABOVE the batter\'s overall rate — bad for the pitcher.'),
-                  createElement('p', {}, createElement('strong', {}, 'Gray:'), ' Within ±25% of the batter\'s average, or fewer than 5 pitches in the zone (low sample).'),
-                  createElement('p', {}, 'The Max Pitches Displayed slider reveals circles from the most extreme zones (furthest above or below the batter\'s average) toward the average. Hover any circle for the zone\'s full breakdown: pitch counts, hit rate, and the batter\'s overall rate. Use the settings panel to filter by pitcher hand or pitch type.')
+                  createElement('p', {}, createElement('strong', {}, 'Green:'), ' Bucket hit rate (contact hits ÷ total pitches of that type in that zone) is 25% or more BELOW the batter\'s overall hits-per-pitch rate — good for the pitcher.'),
+                  createElement('p', {}, createElement('strong', {}, 'Red:'), ' Bucket hit rate is 25% or more ABOVE the batter\'s overall rate — bad for the pitcher.'),
+                  createElement('p', {}, createElement('strong', {}, 'Gray:'), ' Within ±25% of the batter\'s average.'),
+                  createElement('p', {}, 'Buckets with fewer pitches than the ', createElement('strong', {}, 'Min Pitches per Bucket'), ' setting are removed from the grid entirely — too small a sample to trust. Raise it for stricter evidence, lower it to see more pitches.'),
+                  createElement('p', {}, 'The Max Pitches Displayed slider reveals circles from the most extreme buckets (furthest above or below the batter\'s average) toward the average. Hover any circle for its bucket\'s full breakdown: pitch counts, hit rate, and the batter\'s overall rate. The settings panel filters by pitcher hand and pitch type — stats and colors recompute for the selected hand.')
                 ),
                 createElement('div', { className: 'pitch-badge-row' },
                   ...[
@@ -1709,7 +1574,7 @@ createElement('div', {},
                 ),
                 ...makeInfoExpand(
                   createElement('p', {}, 'Each zone gets a vulnerability score from 0 (most vulnerable) to 60 (least) based on whiff rate, weak contact rate, and foul rate.'),
-                  createElement('p', {}, 'The ', createElement('strong', {}, 'Weakness Confidence'), ' setting controls which zones appear: Broad (≤ 60, min 3 swings), Balanced (≤ 35, min 7), Strict (≤ 20, min 10).'),
+                  createElement('p', {}, 'The ', createElement('strong', {}, 'Vulnerable Zone Min Swings'), ' setting (Analysis Settings → Zone Analysis) controls the minimum sample a zone needs before it can appear here.'),
                   createElement('p', {}, 'When attacking here, stay in the zone — even borderline pitches will produce poor contact.')
                 )
               )
@@ -1747,26 +1612,6 @@ createElement('div', {},
                     createElement('strong', {}, 'Contact'), ' = ball put in play for an out.'
                   ),
                   createElement('p', { style: { color: '#64748b' } }, 'More outs in the sample = more reliable signal. Low-data batters may show "Insufficient data."')
-                )
-              )
-            ),
-
-            // Weakness Confidence
-            createElement('div', { className: 'info-entry', id: 'info-entry-weakness-confidence' },
-              createElement('div', { className: 'info-entry__icon', style: { background: 'linear-gradient(to right, #ef4444 33%, #facc15 33% 66%, #22c55e 66%)', padding: '0', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', color: 'white', fontWeight: '800', letterSpacing: '1px' } }, '●●●'),
-              createElement('div', { className: 'info-entry__content' },
-                createElement('div', { className: 'info-entry__title' }, 'Weakness Confidence'),
-                createElement('div', { className: 'info-entry__desc' },
-                  'Controls how strict the vulnerability filter is. ',
-                  createElement('strong', {}, 'Strict'), ' = critical weaknesses only. ',
-                  createElement('strong', {}, 'Balanced'), ' = critical + major. ',
-                  createElement('strong', {}, 'Broad'), ' = all identified weaknesses.'
-                ),
-                ...makeInfoExpand(
-                  createElement('p', {}, createElement('strong', {}, 'Broad (red)'), ' — min 3 pitches, score ≤ 60. Shows all zones where the batter has struggled. Good for batters with limited data.'),
-                  createElement('p', {}, createElement('strong', {}, 'Balanced (orange)'), ' — min 7 pitches, score ≤ 35. Confirmed weaknesses with a decent sample. Best for most situations.'),
-                  createElement('p', {}, createElement('strong', {}, 'Strict (green)'), ' — min 10 pitches, score ≤ 20. Only critical, well-established weaknesses. Use when you need maximum confidence.'),
-                  createElement('p', { style: { color: '#64748b' } }, 'Zone score ranges from 0 (most vulnerable) to 60 (least). Higher min-swings = more data required before a zone appears.')
                 )
               )
             ),
@@ -1819,32 +1664,25 @@ createElement('div', {},
         )
       ) : null,
       (() => {
-        // createTendencies MUST run first — it sets app.allowedZones for the current threshold
         const tendenciesEl = createTendencies(data.tendencies, data.stats, data.zoneAnalysis, data.powerSequence, data.powerSequenceBreakdown);
 
-        // NOW read the freshly-updated app.allowedZones
         const rawZones = data.pitchZones || [];
-        const activeZA = getActiveZoneAnalysis(data);
-        const ratingCtx = computeZoneRatings(activeZA);
-        const annotatedZones = annotatePitchRatings(rawZones, ratingCtx);
-        const fullyFilteredPitches = getFullyFilteredPitches(annotatedZones);
+        const { pitches: visiblePitches, bucketCtx } = getVisiblePitches(data);
         this._tendenciesEl = tendenciesEl;
-        this._activeZoneAnalysis = activeZA;
-        this._ratingCtx = ratingCtx;
-        this._fullyFilteredPitches = fullyFilteredPitches;
+        this._bucketCtx = bucketCtx;
+        this._fullyFilteredPitches = visiblePitches;
         this._rawZoneCount = rawZones.length;
         this._statsTotalPitches = data.stats?.totalPitches || rawZones.length;
-        const countSource = CURRENT_SETTINGS.showAllZones ? annotatedZones : fullyFilteredPitches;
-        this._goodCount = countSource.filter(z => z.rating === 'green').length;
-        this._badCount = countSource.filter(z => z.rating === 'red').length;
-        const displayedSlice = fullyFilteredPitches.slice(0, CURRENT_SETTINGS.maxPitchesDisplayed);
+        this._goodCount = visiblePitches.filter(z => z.rating === 'green').length;
+        this._badCount = visiblePitches.filter(z => z.rating === 'red').length;
+        const displayedSlice = visiblePitches.slice(0, CURRENT_SETTINGS.maxPitchesDisplayed);
         this._displayedCount = displayedSlice.length;
         this._displayedGoodCount = displayedSlice.filter(z => z.rating === 'green').length;
         this._displayedBadCount = displayedSlice.filter(z => z.rating === 'red').length;
       })(),
       (!this.isSettingsDocked && this.showSettingsPanel) ? this.renderSettingsPanel(this._rawZoneCount, this._fullyFilteredPitches.length, this._goodCount, this._badCount, this._displayedCount, this._displayedGoodCount, this._displayedBadCount, this._statsTotalPitches) : null,
       (() => {
-        const { el: pitchZoneInner, count: renderedCount, available: availableCount } = createPitchZone(this._fullyFilteredPitches, data.handedness, this._activeZoneAnalysis, this._ratingCtx);
+        const { el: pitchZoneInner, count: renderedCount, available: availableCount } = createPitchZone(this._fullyFilteredPitches, data.handedness, this._bucketCtx);
         const pitchZoneEl = createElement('div', { className: 'pitch-zone-section' }, pitchZoneInner);
         const batterEl = createBatterGraphic(data.handedness, data.batter, renderedCount, availableCount);
 
