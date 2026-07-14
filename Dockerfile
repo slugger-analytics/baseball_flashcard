@@ -37,6 +37,9 @@ COPY *.svg ./
 ENV PORT=8080
 ENV AWS_LWA_READINESS_CHECK_PATH=/health
 ENV AWS_LWA_ENABLE_COMPRESSION=true
+# Node's default heap cap is ~half the container's memory; give season-scale
+# loads explicit headroom within the Lambda's 2048 MB allocation.
+ENV NODE_OPTIONS=--max-old-space-size=1536
 
 # Expose the port for local testing
 EXPOSE 8080

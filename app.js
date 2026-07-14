@@ -132,6 +132,44 @@ function createElement(tag, props = {}, ...children) {
  */
 const BUCKET_RATING_EDGE = 0.25;
 
+/**
+ * Decodes the server's columnar pitchZones ("pz" columns + metadata.pzLegend)
+ * back into the row objects the rest of the app consumes ({ position, pitch,
+ * outcome, zone, pitcherThrows } per pitch). The server ships columns because a
+ * full-season row-form response overflowed the ALB's 1 MB Lambda-response limit
+ * (reaching users as a 502); decoding happens once here so nothing downstream
+ * changes. Batters that already carry row-form pitchZones (older server during a
+ * deploy) pass through untouched.
+ * @param {Object} teamsData - Wire teamsData from GET /api/teams/range.
+ * @param {Object|undefined} legend - metadata.pzLegend from the same response.
+ * @returns {Object} The same teamsData object with pitchZones materialized.
+ */
+function decodePitchZones(teamsData, legend) {
+  if (!legend) return teamsData;
+  Object.values(teamsData).forEach(batters => {
+    batters.forEach(batter => {
+      if (!batter.pz) {
+        if (!batter.pitchZones) batter.pitchZones = [];
+        return;
+      }
+      const { x, y, t, o, z, h } = batter.pz;
+      const pitchZones = new Array(x.length);
+      for (let i = 0; i < x.length; i++) {
+        pitchZones[i] = {
+          position: [x[i] / 10, y[i] / 10],
+          pitch: legend.t[t[i]],
+          outcome: legend.o[o[i]],
+          zone: legend.z[z[i]],
+          pitcherThrows: legend.h[h[i]],
+        };
+      }
+      batter.pitchZones = pitchZones;
+      delete batter.pz;
+    });
+  });
+  return teamsData;
+}
+
 function bucketKey(p) { return `${p.pitch}|${p.zone}`; }
 
 /**
@@ -703,10 +741,10 @@ printCurrentCard() {
    * @returns {Promise<void>}
    */
   async loadDataRange(startDate, endDate, maxVelocity = 105, seasonYear = null, pitchGroup = 'All', dateLabel = null) {
-    // Ranges beyond ~2 months exceed current server capacity; used to show a
-    // clear message instead of a raw 502 when the season-to-date load fails.
+    // Season-scale loads work but take a while; if one still fails (timeout,
+    // transient error), show a clear message instead of a raw 502.
     const spanDays = Math.round((new Date(endDate) - new Date(startDate)) / 86400000);
-    const tooLargeMessage = 'This date range is bigger than the server can currently process in one load. Ranges up to about 2 months work — a fix for full-season loads is in progress.';
+    const tooLargeMessage = 'This large date range could not finish loading. Season-scale loads can take a couple of minutes — please try again, or pick a shorter range.';
 try {
       this.currentScreen = 'loading';
 
@@ -768,6 +806,8 @@ try {
         this.render();
         return;
       }
+
+      decodePitchZones(data.teamsData, data.metadata && data.metadata.pzLegend);
 
       // --- CACHE WRITE ---
       cachedSeasonData = { teamsData: data.teamsData, metadata: data.metadata };

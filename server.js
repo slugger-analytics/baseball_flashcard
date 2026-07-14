@@ -106,9 +106,12 @@ async function sluggerRequest(endpoint, params = {}) {
  *
  * @param {string} endpoint - API path to paginate (e.g. '/pitches').
  * @param {Object} [params={}] - Additional query parameters merged into each page request.
+ * @param {Function} [mapBatch] - Optional per-page transform applied to each page's records
+ *   before accumulation (filter/slim). Applied after the short-page end-of-data check so it
+ *   cannot affect pagination; records stay in page order.
  * @returns {Promise<Array>} Combined array of all records across all pages, in page order.
  */
-async function fetchAllPages(endpoint, params = {}) {
+async function fetchAllPages(endpoint, params = {}, mapBatch = null) {
   const MAX_PAGES = 500;
   const PAGE_SIZE = 1000;
   const PAGE_CONCURRENCY = 8;
@@ -141,8 +144,8 @@ async function fetchAllPages(endpoint, params = {}) {
       const response = result.value;
       if (response.success && response.data) {
         const items = Array.isArray(response.data) ? response.data : [response.data];
-        allData.push(...items);
         if (items.length < PAGE_SIZE) reachedEnd = true;
+        allData.push(...(mapBatch ? mapBatch(items) : items));
       } else {
         reachedEnd = true;
       }
@@ -235,10 +238,38 @@ function readDiskCache(filePath) {
   });
 }
 
+// Raw pitch records from the API carry dozens of fields; the app reads only these.
+// Slimming each record as its page arrives (instead of holding full-fat records for
+// the whole range) keeps a full-season fetch (~110k+ pitches) far from the Lambda's
+// memory ceiling — the full raw dataset never exists in the heap at once.
+const PITCH_FIELDS = [
+  'date', 'rel_speed', 'release_speed',
+  'batter_id', 'batter_team_code', 'pitcher_id',
+  'batter_side', 'pitcher_throws',
+  'top_or_bottom', 'inning', 'balls', 'strikes', 'pa_of_inning',
+  'auto_pitch_type', 'tagged_pitch_type', 'pitch_call',
+  'exit_speed', 'play_result', 'k_or_bb',
+  'plate_loc_side', 'plate_loc_height',
+  'angle', 'direction', 'distance',
+];
+
+/**
+ * Returns a copy of a raw pitch record containing only the fields the app consumes.
+ */
+function slimPitch(pitch) {
+  const slim = {};
+  for (const field of PITCH_FIELDS) {
+    if (pitch[field] !== undefined) slim[field] = pitch[field];
+  }
+  return slim;
+}
+
 // Ranges bigger than this aren't disk-cached: stringifying + writing them can
 // exhaust the Lambda's 512 MB /tmp (and heap), and a failed write used to leave
 // a truncated file that poisoned every later request for the same range.
-const MAX_CACHED_PITCHES = 60000;
+// Records are slimmed to PITCH_FIELDS before caching (~6x smaller than raw),
+// so the ceiling covers a full season comfortably.
+const MAX_CACHED_PITCHES = 200000;
 
 /**
  * Writes a pitch array to disk as JSON for subsequent streamed reads.
@@ -288,19 +319,20 @@ async function fetchPitchesByDateRange(startDateStr, endDateStr) {
   console.log(`Fetching date range from SLUGGER API: ${startDateStr} to ${endDateStr}`);
 
   try {
-    const pitches = await fetchAllPages('/pitches', {
+    // Filter + slim each page as it arrives so full-fat out-of-range records are
+    // dropped immediately instead of accumulating across the whole range.
+    const filtered = await fetchAllPages('/pitches', {
       date_range_start: startDateStr,
       date_range_end: endDateStr
-    });
+    }, (items) => items
+      .filter(p => {
+        const d = (p.date || '').slice(0, 10);
+        return d >= startDateStr && d <= endDateStr;
+      })
+      .map(slimPitch)
+    );
 
-    console.log(`✅ Success: Fetched ${pitches.length} pitches from API`);
-
-    const filtered = pitches.filter(p => {
-      const d = (p.date || '').slice(0, 10);
-      return d >= startDateStr && d <= endDateStr;
-    });
-
-    console.log(`✅ After date filter (${startDateStr} → ${endDateStr}): ${filtered.length} pitches`);
+    console.log(`✅ Fetched + date-filtered (${startDateStr} → ${endDateStr}): ${filtered.length} pitches`);
 
     // Cache failures must never discard a successful fetch — serve uncached.
     if (filtered.length <= MAX_CACHED_PITCHES) {
@@ -809,6 +841,59 @@ function getPitchAbbreviation(pitchType) {
 }
 
 /**
+ * Re-encodes each batter's pitchZones array into a columnar form for the wire.
+ *
+ * Row form ({position, pitch, outcome, zone, pitcherThrows} per pitch) repeats key
+ * names and string values ~100k times on a full-season response; even gzipped (and
+ * then base64-encoded by the Lambda/ALB integration) that overflowed the ALB's 1 MB
+ * response limit and reached users as a 502. Columnar arrays of small integers with
+ * per-response legends carry the same data in ~1/4 the size: a full season gzips to
+ * ~550 KB (~730 KB after base64) vs ~850 KB (~1.1 MB) in row form.
+ *
+ * position values are already rounded to one decimal, so ×10 round-trips exactly.
+ * Legends are built from the data and shipped in metadata.pzLegend, so the client
+ * decoder can never drift from the server's value sets.
+ *
+ * @param {Object} teamsData - transformPitchDataToTeams output (row-form pitchZones).
+ * @returns {{teamsData: Object, pzLegend: Object}} Wire teamsData (pz columns per
+ *   batter, no pitchZones) and the legend needed to decode it.
+ */
+function encodePitchZonesColumnar(teamsData) {
+  const legends = { t: new Map(), o: new Map(), z: new Map(), h: new Map() };
+  const indexOf = (legend, value) => {
+    let idx = legend.get(value);
+    if (idx === undefined) {
+      idx = legend.size;
+      legend.set(value, idx);
+    }
+    return idx;
+  };
+
+  const wireTeams = {};
+  for (const [teamName, batters] of Object.entries(teamsData)) {
+    wireTeams[teamName] = batters.map(batter => {
+      const { pitchZones, ...rest } = batter;
+      const x = [], y = [], t = [], o = [], z = [], h = [];
+      for (const p of (pitchZones || [])) {
+        x.push(Math.round(p.position[0] * 10));
+        y.push(Math.round(p.position[1] * 10));
+        t.push(indexOf(legends.t, p.pitch));
+        o.push(indexOf(legends.o, p.outcome));
+        z.push(indexOf(legends.z, p.zone));
+        h.push(indexOf(legends.h, p.pitcherThrows));
+      }
+      return { ...rest, pz: { x, y, t, o, z, h } };
+    });
+  }
+
+  const pzLegend = {
+    t: [...legends.t.keys()], o: [...legends.o.keys()],
+    z: [...legends.z.keys()], h: [...legends.h.keys()],
+  };
+  return { teamsData: wireTeams, pzLegend };
+}
+
+/**
  * GET /api/teams/range
  * Returns batter scouting data for a given date range.
  * @query {string} startDate - Start date (YYYY-MM-DD, YYYYMMDD, or MM-DD-YYYY).
@@ -909,15 +994,18 @@ const teamsRangeHandler = async (req, res) => {
     
     const teamCount = Object.keys(teamsData).length;
     console.log(`✅ Complete: ${teamCount} teams, ${totalPlayers} players\n`);
-    
-    res.json({ 
-      teamsData, 
-      metadata: { 
-        startDate: finalStartDate, 
-        endDate: finalEndDate, 
+
+    const wire = encodePitchZonesColumnar(teamsData);
+
+    res.json({
+      teamsData: wire.teamsData,
+      metadata: {
+        startDate: finalStartDate,
+        endDate: finalEndDate,
         filesProcessed: pitches.length,
-        pitchesFilteredByVelocity: countPitchesByVelocity(pitches, parsedMaxVelocity)
-      } 
+        pitchesFilteredByVelocity: countPitchesByVelocity(pitches, parsedMaxVelocity),
+        pzLegend: wire.pzLegend
+      }
     });
     
   } catch (error) {

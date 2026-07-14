@@ -3,8 +3,10 @@ name: Flashcard Deploy
 # Builds the widget-flashcard container (arm64 + Lambda Web Adapter) and deploys it to the
 # widget-flashcard Lambda behind the shared slugger-alb at /widgets/flashcard/*.
 # Auth is via GitHub OIDC (role github-actions-deploy) — no static AWS keys.
-# update-function-code does NOT change memory/timeout/env, so the live 2048MB/120s +
-# AWS_LWA_ENABLE_COMPRESSION config is preserved by every deploy.
+# update-function-code does NOT change memory/timeout/env, so the live 2048MB memory +
+# AWS_LWA_ENABLE_COMPRESSION config is preserved by every deploy. A best-effort step
+# below raises only the timeout (full-season fetches approach the old 120s cap as the
+# season grows); if the deploy role lacks UpdateFunctionConfiguration it is skipped.
 
 on:
   push:
@@ -64,6 +66,26 @@ jobs:
       - name: Wait for Lambda update
         run: aws lambda wait function-updated --function-name $LAMBDA_FUNCTION
 
+      - name: Raise Lambda timeout for season-scale loads (best-effort)
+        continue-on-error: true
+        run: |
+          # Full-season /api/teams/range fetches run ~90s+ and grow with the season;
+          # the ALB idle timeout is 300s, so 240s keeps headroom on both sides.
+          # Only --timeout is passed: memory/env/image stay untouched.
+          current=$(aws lambda get-function-configuration \
+            --function-name $LAMBDA_FUNCTION --query Timeout --output text 2>/dev/null || echo 0)
+          case "$current" in ''|*[!0-9]*) current=0;; esac
+          if [ "$current" -ge 240 ]; then
+            echo "Timeout already ${current}s — nothing to do"; exit 0
+          fi
+          if aws lambda update-function-configuration \
+               --function-name $LAMBDA_FUNCTION --timeout 240; then
+            aws lambda wait function-updated --function-name $LAMBDA_FUNCTION
+            echo "Timeout raised ${current}s -> 240s"
+          else
+            echo "::warning::Could not raise Lambda timeout (role likely lacks lambda:UpdateFunctionConfiguration); season loads stay capped at ${current}s"
+          fi
+
       - name: Smoke test
         run: |
           # Retry to absorb the arm64 Lambda cold start after the image swap.
@@ -78,3 +100,22 @@ jobs:
             echo "attempt $i: HTTP $code — retrying in 15s"; sleep 15
           done
           echo "Smoke FAILED after 10 attempts"; exit 1
+
+      - name: Smoke test data path (season-scale range)
+        run: |
+          # The static page can be green while the data path 502s (oversized response,
+          # OOM, timeout) — hit the real API with a season-scale range. Server-side
+          # work runs ~90s+, so allow a generous curl timeout and one retry.
+          START="2026-04-21"
+          END=$(date -u +%F)
+          URL="https://www.alpb-analytics.com/widgets/flashcard/api/teams/range?startDate=${START}&endDate=${END}&maxVelocity=105&pitchGroup=All"
+          for i in 1 2; do
+            code=$(curl -s -o /tmp/season.json -w "%{http_code}" --max-time 280 --compressed "$URL") || true
+            size=$(wc -c < /tmp/season.json 2>/dev/null || echo 0)
+            echo "attempt $i: HTTP $code, ${size} bytes"
+            if [ "$code" = "200" ] && [ "$size" -gt 100000 ] && grep -q '"pzLegend"' /tmp/season.json; then
+              echo "Season data path OK"; exit 0
+            fi
+            sleep 20
+          done
+          echo "Season data path smoke FAILED"; exit 1
