@@ -58,10 +58,20 @@ app.use((req, res, next) => {
   next();
 });
 
-// Serve static files at both root and BASE_PATH
-app.use(express.static('.'));
+// Serve static files at both root and BASE_PATH.
+// no-cache = revalidate on every use (304 when unchanged), NOT "don't cache".
+// Without it, browsers held app.js for days on heuristic freshness and users
+// ran stale bundles long after deploys.
+const STATIC_OPTS = {
+  setHeaders: (res, filePath) => {
+    if (/\.(html|js|css)$/.test(filePath)) {
+      res.setHeader('Cache-Control', 'no-cache');
+    }
+  }
+};
+app.use(express.static('.', STATIC_OPTS));
 if (BASE_PATH) {
-  app.use(BASE_PATH, express.static('.'));
+  app.use(BASE_PATH, express.static('.', STATIC_OPTS));
 }
 
 const SLUGGER_CONFIG = {
@@ -200,11 +210,16 @@ app.get('/api/cache-status', (req, res) => {
 
 /**
  * Resolves a player ID to a display name using the in-memory cache.
+ * Names are trimmed: the league DB contains duplicate player records that
+ * differ only by trailing whitespace (e.g. "Brigman, Bryson " vs
+ * "Brigman, Bryson"), and batters are keyed by name — without trimming, one
+ * player fragments into two lineup cards with split stats.
  * @param {string} id - SLUGGER player UUID.
  * @returns {string} Player's full name, or a fallback identifier if not found.
  */
 function getPlayerName(id) {
-  return lookupCache.players.get(id)?.player_name || `Player-${id?.substring(0, 8) || 'Unknown'}`;
+  const name = lookupCache.players.get(id)?.player_name;
+  return (name && name.trim()) || `Player-${id?.substring(0, 8) || 'Unknown'}`;
 }
 
 /**
@@ -641,9 +656,10 @@ function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 9
       }
 
       // Pitcher's perspective: the batter silhouette flanks the zone as the
-      // pitcher sees it (LHB left of the zone, RHB right), so positive
-      // plate_loc_side (catcher's right) must render on the LEFT of the graphic.
-      const xPos = 50 - (pitch.plate_loc_side * 25);
+      // pitcher sees it (LHB left of the zone, RHB right). Positive
+      // plate_loc_side = catcher's left = the pitcher's RIGHT (see
+      // getZoneFromLocation), so it renders on the RIGHT of the graphic.
+      const xPos = 50 + (pitch.plate_loc_side * 25);
       const yPos = 100 - ((pitch.plate_loc_height - 1.5) / 2 * 100);
 
       // Single-word outcome per pitch so the frontend can bucket pitches any
@@ -815,14 +831,24 @@ function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 9
 
 /**
  * Maps a pitch's plate coordinates to a named strike zone (e.g. 'High-In', 'Mid-Out').
- * @param {number} plateSide - Horizontal plate position in feet (negative = catcher's left).
+ *
+ * Sign convention (verified empirically on the full 2026 feed, ~107k pitches):
+ * positive plate_loc_side = the CATCHER'S LEFT = third-base side = where a
+ * right-handed batter stands. Two independent checks agree: (1) pitchers work
+ * away — pitches to RHB lean negative, to LHB positive; (2) pitch physics —
+ * RHP sliders (glove-side break, catcher's right) average -0.36 while RHP
+ * sinkers/changeups (arm-side run, catcher's left) average +0.22/+0.27, with
+ * LHP exactly mirrored. Earlier code assumed the opposite sign, which mirrored
+ * every In/Out label (and the dot positions that were later flipped to match).
+ *
+ * @param {number} plateSide - Horizontal plate position in feet (positive = catcher's left).
  * @param {number} plateHeight - Vertical plate position in feet above the ground.
  * @param {string} handedness - Batter handedness: 'LHB' or 'RHB'.
  * @returns {string} Zone label in the format '<Vertical>-<Horizontal>'.
  */
 function getZoneFromLocation(plateSide, plateHeight, handedness) {
-  const isInside = (handedness === 'LHB' && plateSide > 0.33) || (handedness === 'RHB' && plateSide < -0.33);
-  const isOutside = (handedness === 'LHB' && plateSide < -0.33) || (handedness === 'RHB' && plateSide > 0.33);
+  const isInside = (handedness === 'RHB' && plateSide > 0.33) || (handedness === 'LHB' && plateSide < -0.33);
+  const isOutside = (handedness === 'RHB' && plateSide < -0.33) || (handedness === 'LHB' && plateSide > 0.33);
   const horizontal = isInside ? 'In' : (isOutside ? 'Out' : 'Mid');
   const isHigh = plateHeight > 3.0, isLow = plateHeight < 2.0;
   const vertical = isHigh ? 'High' : (isLow ? 'Low' : 'Mid');
