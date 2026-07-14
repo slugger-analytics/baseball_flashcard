@@ -2443,9 +2443,16 @@ button:active {
   }
 
   .batter-graphic {
-    flex: 1 1 auto;
-    min-width: 80px;
-    max-width: 260px;
+    /* Stand exactly as tall as the zone. The zone is clamp(300px, 52%, 460px)
+       wide at a 3/4 aspect, and the batter SVG is 150 x 292.5, so a batter box
+       at 68.4% of the zone's width (= 35.56% / 205px / 314px) fills the zone's
+       height edge-to-edge under object-fit: contain. A flexible width let the
+       silhouette shrink whenever the row was squeezed (e.g. sidebar docked). */
+    flex: 0 0 auto;
+    height: auto;
+    width: clamp(205px, 35.56%, 314px);
+    min-width: 0;
+    max-width: none;
   }
 
   .batter-graphic img {
