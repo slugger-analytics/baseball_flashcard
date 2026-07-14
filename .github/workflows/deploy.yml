@@ -110,7 +110,7 @@ jobs:
           START=$(date -u -d "7 days ago" +%F)
           URL="https://www.alpb-analytics.com/widgets/flashcard/api/teams/range?startDate=${START}&endDate=${END}&maxVelocity=105&pitchGroup=All"
           for i in 1 2 3; do
-            code=$(curl -s -o /tmp/week.json -w "%{http_code}" --max-time 120 --compressed "$URL") || echo "curl exit: $?"
+            code=$(curl -s --http1.1 -o /tmp/week.json -w "%{http_code}" --max-time 120 --compressed "$URL") || echo "curl exit: $?"
             size=$(wc -c < /tmp/week.json 2>/dev/null || echo 0)
             echo "attempt $i: HTTP ${code:-none}, ${size} bytes"
             if [ "${code:-}" = "200" ] && [ "$size" -gt 20000 ] && grep -q '"pzLegend"' /tmp/week.json; then
@@ -123,16 +123,15 @@ jobs:
       - name: Smoke test data path (season-scale range)
         run: |
           # Season-scale = the failure class the columnar format fixes (response
-          # oversize/timeout). A cold container + cold cache answers after ~90-110s
-          # of silence; GitHub runners have been seen returning "HTTP 200, 0 bytes"
-          # for those long-TTFB responses, so treat empty-body attempts as prewarms
-          # (each one populates a container's disk cache server-side) and retry —
-          # warm answers arrive in ~15s. Genuine 5xx/oversize still fails all tries.
+          # oversize/timeout). Cold container + cold cache answers after ~90-110s of
+          # silence, so keep retries: failed attempts still warm the server-side disk
+          # cache and later tries answer in ~15s. --http1.1 avoids a runner curl
+          # HTTP/2 stream bug (exit 92: status 200 arrives, body transfer dies).
           START="2026-04-21"
           END=$(date -u +%F)
           URL="https://www.alpb-analytics.com/widgets/flashcard/api/teams/range?startDate=${START}&endDate=${END}&maxVelocity=105&pitchGroup=All"
           for i in 1 2 3 4; do
-            meta=$(curl -sS -o /tmp/season.json -w "%{http_code} ttfb=%{time_starttransfer}s total=%{time_total}s" \
+            meta=$(curl -sS --http1.1 -o /tmp/season.json -w "%{http_code} ttfb=%{time_starttransfer}s total=%{time_total}s" \
               --max-time 280 --compressed "$URL" 2>/tmp/curlerr) || echo "curl exit $?: $(cat /tmp/curlerr 2>/dev/null)"
             code=${meta%% *}
             size=$(wc -c < /tmp/season.json 2>/dev/null || echo 0)
