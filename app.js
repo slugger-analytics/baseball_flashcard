@@ -1070,6 +1070,43 @@ try {
 
 
 
+        // 3. Quick Options (Smaller, secondary buttons)
+createElement('div', {},
+          createElement('label', { style: { display: 'block', 'margin-bottom': '10px', 'font-weight': 'bold', 'font-size': '16px' } }, 
+            'Time Period'
+          ),
+          createElement('div', { style: { display: 'flex', gap: '10px', justifyContent: 'center', flexWrap: 'wrap' } },
+            // Primary/default load: full-width, Deep Navy, labeled as the default
+            createElement('button', {
+              className: 'team-btn',
+              style: { padding: '12px 10px', fontSize: '15px', flexBasis: '100%', background: 'rgb(26, 71, 143)', border: 'none', boxShadow: 'none' },
+              onclick: () => this.fetchSmartData(null)
+            },
+              ...(() => {
+                const fs = getFullSeasonRange();
+                const todayStr = new Date().toISOString().slice(0, 10);
+                const inSeason = fs.year === 2026 && fs.end === todayStr;
+                return [
+                  createElement('div', { style: { fontWeight: '700' } },
+                    inSeason ? '2026 Season to Date' : `Full ${fs.year} Season`),
+                  createElement('div', { style: { fontSize: '11px', fontWeight: '500', opacity: '0.85', marginTop: '2px' } },
+                    inSeason ? 'Default · opening day through today' : 'Default · full season')
+                ];
+              })()
+            ),
+            createElement('button', {
+              // Uses standard "Load Custom Range" blue
+              className: 'team-btn', style: { padding: '8px 10px', fontSize: '13px', flex: 1, minWidth: '130px' },
+              onclick: () => this.fetchSmartData(7)
+            }, 'Load Last 7 Days'),
+            createElement('button', {
+              // Uses standard "Load Custom Range" blue
+              className: 'team-btn', style: { padding: '8px 10px', fontSize: '13px', flex: 1, minWidth: '130px' },
+              onclick: () => this.fetchSmartData(30)
+            }, 'Load Last 30 Days'),
+          )
+        ),
+
 // 2. Custom Date Range (Main Feature with Calendar Pickers)
         createElement('div', { style: { padding: '15px', backgroundColor: 'white', borderRadius: '8px', border: '1px solid #dee2e6' } },
           createElement('label', { style: { display: 'block', 'margin-bottom': '15px', 'font-weight': 'bold', 'font-size': '16px' } }, 
@@ -1137,43 +1174,6 @@ createElement('div', { style: { flex: 1 } },
               borderRadius: '6px', padding: '12px', color: '#c62828', fontSize: '14px'
             }
           }, this.noDataError) : null
-        ),
-
-        // 3. Quick Options (Smaller, secondary buttons)
-createElement('div', {},
-          createElement('label', { style: { display: 'block', 'margin-bottom': '10px', 'font-weight': 'bold', 'font-size': '14px', color: '#666' } }, 
-            'Quick Options'
-          ),
-          createElement('div', { style: { display: 'flex', gap: '10px', justifyContent: 'center', flexWrap: 'wrap' } },
-            // Primary/default load: full-width, Deep Navy, labeled as the default
-            createElement('button', {
-              className: 'team-btn',
-              style: { padding: '12px 10px', fontSize: '15px', flexBasis: '100%', background: 'rgb(26, 71, 143)', border: 'none', boxShadow: 'none' },
-              onclick: () => this.fetchSmartData(null)
-            },
-              ...(() => {
-                const fs = getFullSeasonRange();
-                const todayStr = new Date().toISOString().slice(0, 10);
-                const inSeason = fs.year === 2026 && fs.end === todayStr;
-                return [
-                  createElement('div', { style: { fontWeight: '700' } },
-                    inSeason ? '2026 Season to Date' : `Full ${fs.year} Season`),
-                  createElement('div', { style: { fontSize: '11px', fontWeight: '500', opacity: '0.85', marginTop: '2px' } },
-                    inSeason ? 'Default · opening day through today' : 'Default · full season')
-                ];
-              })()
-            ),
-            createElement('button', {
-              // Uses standard "Load Custom Range" blue
-              className: 'team-btn', style: { padding: '8px 10px', fontSize: '13px', flex: 1, minWidth: '130px' },
-              onclick: () => this.fetchSmartData(7)
-            }, 'Load Last 7 Days'),
-            createElement('button', {
-              // Uses standard "Load Custom Range" blue
-              className: 'team-btn', style: { padding: '8px 10px', fontSize: '13px', flex: 1, minWidth: '130px' },
-              onclick: () => this.fetchSmartData(30)
-            }, 'Load Last 30 Days'),
-          )
         )
       )
     );
@@ -1420,6 +1420,14 @@ createElement('div', {},
                 )
               )
             ),
+            // Plain-language key for the circle colors (bucket = pitch type × zone)
+            createElement('div', { style: { fontSize: '12px', color: '#475569', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '8px 10px', marginBottom: '12px', lineHeight: '1.5' } },
+              'Circles are rated by bucket (pitch type + zone): ',
+              createElement('b', { style: { color: '#15803d' } }, 'green'),
+              ' = batter hits 25%+ below his overall rate there (attack), ',
+              createElement('b', { style: { color: '#b91c1c' } }, 'red'),
+              ' = 25%+ above (avoid), gray = in between or under the minimum sample.'
+            ),
             createSlider('Max Pitches Displayed', 'maxPitchesDisplayed', 0, sliderMax, 1, effectiveMaxPitches),
             createSlider('Pitch Circle Size (px)', 'pitchCircleSize', 28, 56, 1),
             // Buckets = pitch type × zone; buckets under this size are dropped
@@ -1493,7 +1501,7 @@ createElement('div', {},
       createElement('div', { className: 'settings-modal__footer' },
         createElement('button', { className: 'settings-modal__reset-btn', onclick: () => this.resetSettings() }, 'Reset to Defaults'),
         docked
-          ? createElement('button', { className: 'settings-modal__close-btn', onclick: () => { this.isSettingsDocked = false; this.render(); } }, 'Close')
+          ? createElement('button', { className: 'settings-modal__close-btn', title: 'Hide the panel — use "Show Settings" at the top to bring it back', onclick: () => { this.isSettingsDocked = false; this.render(); } }, 'Hide Panel')
           : createElement('button', { className: 'settings-modal__close-btn', onclick: () => this.toggleSettings() }, 'Close')
       )
     ];
@@ -1536,9 +1544,10 @@ createElement('div', {},
             onclick: () => this.toggleInfo()
           }, '💡'),
           createElement('button', {
-            className: 'settings-btn',
+            className: 'settings-btn settings-btn--labeled',
+            title: this.isSettingsDocked ? 'Hide the settings panel' : 'Show the settings panel',
             onclick: () => this.toggleSettings()
-          }, '🛠️')
+          }, this.isSettingsDocked ? '⚙ Hide Settings' : '⚙ Show Settings')
         ),
         //test for fork
         createElement('div', { className: 'header__controls' },

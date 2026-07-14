@@ -839,6 +839,18 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
 
 .settings-btn { background: #fdba74; color: #c2410c; }
 
+/* Labeled variant: text button, not a fixed icon square */
+.settings-btn.settings-btn--labeled {
+  width: auto !important;
+  height: 36px;
+  padding: 0 14px !important;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  font-size: 14px;
+  font-weight: 600;
+}
+
 /* Information & Tendencies Cards */
 .tendencies, .power-sequence {
   background: #ffffff;
@@ -2279,6 +2291,11 @@ button:active {
     width: 44px;
     height: 44px;
     font-size: 18px;
+  }
+  .settings-btn.settings-btn--labeled {
+    width: auto !important;
+    height: 44px;
+    font-size: 14px;
   }
   .pitch-filter-btn {
     min-height: 44px;
