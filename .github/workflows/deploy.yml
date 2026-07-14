@@ -101,19 +101,43 @@ jobs:
           done
           echo "Smoke FAILED after 10 attempts"; exit 1
 
+      - name: Smoke test data path (7-day range)
+        run: |
+          # The static page can be green while the data path 502s — assert the API
+          # itself works and ships the columnar format. A 7-day range answers in
+          # seconds, so this is the deterministic gate.
+          END=$(date -u +%F)
+          START=$(date -u -d "7 days ago" +%F)
+          URL="https://www.alpb-analytics.com/widgets/flashcard/api/teams/range?startDate=${START}&endDate=${END}&maxVelocity=105&pitchGroup=All"
+          for i in 1 2 3; do
+            code=$(curl -s -o /tmp/week.json -w "%{http_code}" --max-time 120 --compressed "$URL") || echo "curl exit: $?"
+            size=$(wc -c < /tmp/week.json 2>/dev/null || echo 0)
+            echo "attempt $i: HTTP ${code:-none}, ${size} bytes"
+            if [ "${code:-}" = "200" ] && [ "$size" -gt 20000 ] && grep -q '"pzLegend"' /tmp/week.json; then
+              echo "7-day data path OK"; exit 0
+            fi
+            sleep 15
+          done
+          echo "7-day data path smoke FAILED"; exit 1
+
       - name: Smoke test data path (season-scale range)
         run: |
-          # The static page can be green while the data path 502s (oversized response,
-          # OOM, timeout) — hit the real API with a season-scale range. Server-side
-          # work runs ~90s+, so allow a generous curl timeout and one retry.
+          # Season-scale = the failure class the columnar format fixes (response
+          # oversize/timeout). A cold container + cold cache answers after ~90-110s
+          # of silence; GitHub runners have been seen returning "HTTP 200, 0 bytes"
+          # for those long-TTFB responses, so treat empty-body attempts as prewarms
+          # (each one populates a container's disk cache server-side) and retry —
+          # warm answers arrive in ~15s. Genuine 5xx/oversize still fails all tries.
           START="2026-04-21"
           END=$(date -u +%F)
           URL="https://www.alpb-analytics.com/widgets/flashcard/api/teams/range?startDate=${START}&endDate=${END}&maxVelocity=105&pitchGroup=All"
-          for i in 1 2; do
-            code=$(curl -s -o /tmp/season.json -w "%{http_code}" --max-time 280 --compressed "$URL") || true
+          for i in 1 2 3 4; do
+            meta=$(curl -sS -o /tmp/season.json -w "%{http_code} ttfb=%{time_starttransfer}s total=%{time_total}s" \
+              --max-time 280 --compressed "$URL" 2>/tmp/curlerr) || echo "curl exit $?: $(cat /tmp/curlerr 2>/dev/null)"
+            code=${meta%% *}
             size=$(wc -c < /tmp/season.json 2>/dev/null || echo 0)
-            echo "attempt $i: HTTP $code, ${size} bytes"
-            if [ "$code" = "200" ] && [ "$size" -gt 100000 ] && grep -q '"pzLegend"' /tmp/season.json; then
+            echo "attempt $i: HTTP ${code:-none} (${meta:-no metadata}) ${size} bytes"
+            if [ "${code:-}" = "200" ] && [ "$size" -gt 100000 ] && grep -q '"pzLegend"' /tmp/season.json; then
               echo "Season data path OK"; exit 0
             fi
             sleep 20
