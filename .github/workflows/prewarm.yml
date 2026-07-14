@@ -1,0 +1,26 @@
+name: Flashcard Cache Prewarm
+
+# Keeps the widget's per-container disk cache warm for the default
+# season-to-date range so a coach's load answers in ~15s instead of the
+# ~90-110s a cold fetch takes. Each hit warms whichever Lambda container the
+# ALB routes to. Best-effort: failures don't page anyone — the request itself
+# repopulates the cache when the service is healthy again.
+
+on:
+  schedule:
+    # every 30 minutes, roughly 5am-11pm ET year-round (UTC window is fixed,
+    # so it shifts an hour between EDT and EST — fine for best-effort warming)
+    - cron: '*/30 0-4,9-23 * * *'
+  workflow_dispatch:
+
+jobs:
+  prewarm:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Warm season-to-date range
+        run: |
+          START="2026-04-21"
+          END=$(date -u +%F)
+          URL="https://www.alpb-analytics.com/widgets/flashcard/api/teams/range?startDate=${START}&endDate=${END}&maxVelocity=105&pitchGroup=All"
+          code=$(curl -s --http1.1 -o /dev/null -w "%{http_code} ttfb=%{time_starttransfer}s" --max-time 280 --compressed "$URL") || true
+          echo "prewarm: ${code:-request failed}"
