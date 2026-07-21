@@ -1,4 +1,5 @@
-**Live deployment:** https://slugger-baseball-flashcard.vercel.app/
+**Live deployment (prod):** https://slugger-alb-1518464736.us-east-2.elb.amazonaws.com/widgets/flashcard/ — AWS Lambda behind the shared slugger ALB, auto-deployed by the `Flashcard Deploy` workflow on every push to `main`. Static frontend mirror: https://slugger-analytics.github.io/baseball_flashcard/
+> The old Vercel deployment (slugger-baseball-flashcard.vercel.app) is LEGACY/stale — do not use it to judge what's live. The CI workflow's Vercel deploy job stays skipped unless the Vercel secrets are configured.
 
 ---
 
