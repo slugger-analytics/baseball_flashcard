@@ -215,6 +215,29 @@ Push to `main` to trigger a production deploy.
 
 ---
 
+## CI/CD
+
+GitHub Actions (`.github/workflows/ci.yml`) runs on every push and pull request:
+
+- **checks** — `npm ci`, `node --check` on `server.js` and `app.js`, then `npm test` (`test_smoke.js`), which boots the server **without any secrets** and asserts the static `index.html` serves, the health endpoints answer, and `/api/batter/card` fails gracefully (400/404) when misused. No `SLUGGER_API_KEY` is needed for CI to pass.
+- **deploy** — on pushes to `main` only, after checks pass, deploys to Vercel production via `npx vercel deploy --prod`. Until the secrets below exist, this job logs `VERCEL_TOKEN not set — skipping deploy` and does nothing.
+
+(The AWS Lambda pipeline in `.github/workflows/deploy.yml` is separate and continues to deploy `www.alpb-analytics.com/widgets/flashcard` on pushes to `main`.)
+
+### Activating Vercel auto-deploy
+
+Someone with access to the Vercel account that owns the `slugger-baseball-flashcard` project must add three **repository secrets** (GitHub → Settings → Secrets and variables → Actions):
+
+| Secret | Where to get it |
+|---|---|
+| `VERCEL_TOKEN` | vercel.com → Account Settings → Tokens → Create |
+| `VERCEL_ORG_ID` | `npx vercel link` then read `.vercel/project.json` (`orgId`), or Vercel dashboard → Team/Account Settings → General |
+| `VERCEL_PROJECT_ID` | Same `.vercel/project.json` (`projectId`), or `npx vercel project inspect slugger-baseball-flashcard`, or project Settings → General |
+
+Once all three are set, the next push to `main` deploys to production automatically. Remember the project itself still needs `SLUGGER_API_KEY` set in its Vercel environment variables.
+
+---
+
 ## Data Availability
 
 Pitch data lives behind the SLUGGER API (ALPB + Trackman). A valid `SLUGGER_API_KEY` is required to fetch any data. Contact the SARG team or ALPB platform administrators for API access. No raw data files are committed to this repository.

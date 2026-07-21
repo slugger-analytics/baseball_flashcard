@@ -1,0 +1,66 @@
+name: CI
+
+# Checks run on every push and PR with NO secrets required.
+# The deploy job pushes main to Vercel production — but only once the three
+# VERCEL_* repo secrets exist (see README "CI/CD"); until then it logs a
+# notice and skips. This is independent of the AWS Lambda pipeline in
+# deploy.yml, which continues to deploy www.alpb-analytics.com/widgets/flashcard.
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Matches the production runtime (Dockerfile: node:20-slim)
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Syntax check (server + client bundle)
+        run: |
+          node --check server.js
+          node --check app.js
+
+      - name: Smoke test (boots server without secrets)
+        # test_smoke.js requires server.js as a module, listens on an ephemeral
+        # port, and asserts: static index.html serves, /health + /api/health +
+        # /api/cache-status answer, and /api/batter/card fails gracefully (400
+        # missing-batter, 404 future-window) with no SLUGGER_API_KEY configured.
+        run: npm test
+
+  deploy:
+    needs: checks
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      # The secrets context is not available in job-level `if`, so gate the
+      # deploy steps on a step output instead.
+      - name: Check for Vercel credentials
+        id: creds
+        run: echo "have_token=${{ secrets.VERCEL_TOKEN != '' }}" >> "$GITHUB_OUTPUT"
+
+      - name: Skip notice
+        if: steps.creds.outputs.have_token != 'true'
+        run: echo "VERCEL_TOKEN not set — skipping deploy"
+
+      - uses: actions/checkout@v4
+        if: steps.creds.outputs.have_token == 'true'
+
+      - name: Deploy to Vercel (production)
+        if: steps.creds.outputs.have_token == 'true'
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          # With ORG_ID + PROJECT_ID in the environment, the Vercel CLI is
+          # non-interactive and needs no .vercel/ directory in the repo.
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: npx vercel@latest deploy --prod --yes --token "$VERCEL_TOKEN"
