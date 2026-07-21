@@ -370,6 +370,62 @@ async function fetchPitchesByDateRange(startDateStr, endDateStr) {
 }
 
 /**
+ * Fetches pitch records for a SINGLE batter in a date range, with a per-batter
+ * disk cache. The SLUGGER `/pitches` endpoint accepts a `batter_id` filter that
+ * scopes the query server-side, so this pulls only the chosen batter's pitches
+ * (a few hundred records) instead of the whole date-range pitch space (100k+).
+ * This is the interactive flow's only pitch query — the full-space
+ * fetchPitchesByDateRange is never on the batter-first path.
+ * @param {string} batterId - SLUGGER player UUID to scope the query to.
+ * @param {string} startDateStr - Start date (YYYY-MM-DD).
+ * @param {string} endDateStr - End date (YYYY-MM-DD).
+ * @returns {Promise<Array>} Slimmed pitch records for that batter, or [] on error.
+ */
+async function fetchPitchesForBatter(batterId, startDateStr, endDateStr) {
+  const cachePath = path.join(CACHE_DIR, `cache_batter_${batterId}_${startDateStr}_${endDateStr}.json`);
+
+  if (fs.existsSync(cachePath)) {
+    console.log(`💾 Batter cache hit: ${path.basename(cachePath)}`);
+    try {
+      return await readDiskCache(cachePath);
+    } catch (err) {
+      console.error(`⚠️ Corrupt batter cache ${path.basename(cachePath)}, refetching:`, err.message);
+      try { fs.unlinkSync(cachePath); } catch (_) { /* best effort */ }
+    }
+  }
+
+  console.log(`Fetching batter ${batterId?.slice(0, 8)} pitches: ${startDateStr} → ${endDateStr}`);
+
+  try {
+    // batter_id scopes the upstream query; the date filter below is a safety net.
+    const filtered = await fetchAllPages('/pitches', {
+      date_range_start: startDateStr,
+      date_range_end: endDateStr,
+      batter_id: batterId
+    }, (items) => items
+      .filter(p => {
+        const d = (p.date || '').slice(0, 10);
+        return d >= startDateStr && d <= endDateStr;
+      })
+      .map(slimPitch)
+    );
+
+    console.log(`✅ Batter ${batterId?.slice(0, 8)}: ${filtered.length} pitches`);
+
+    try {
+      await writeDiskCache(cachePath, filtered);
+    } catch (err) {
+      console.error(`⚠️ Batter cache write failed (serving uncached):`, err.message);
+    }
+
+    return filtered;
+  } catch (error) {
+    console.error(`❌ Error fetching batter ${batterId} pitches:`, error.message);
+    return [];
+  }
+}
+
+/**
  * Scores a batter's steal threat level based on stolen base history and speed indicators.
  * @param {Object} batter - Batter data object built by transformPitchDataToTeams.
  * @returns {string} 'Low', 'Moderate (reason)', or 'High (reason)'.
@@ -1289,6 +1345,189 @@ function formatDateForApi(dateStr) {
   return dateStr;
 }
 
+/**
+ * Normalizes and validates a requested date range, falling back to season defaults.
+ * Mirrors the parsing/validation teamsRangeHandler does inline, shared by the
+ * batter-scoped card endpoint.
+ * @param {string} startDate - Raw start date (YYYY-MM-DD, YYYYMMDD, or MM-DD-YYYY).
+ * @param {string} endDate - Raw end date.
+ * @returns {{finalStartDate:string, finalEndDate:string} | {error:string, status:number, message:string}}
+ */
+function resolveDateRange(startDate, endDate) {
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+
+  const parseDateInput = (dateStr) => {
+    if (!dateStr) return null;
+    const mdyMatch = dateStr.match(/^(\d{2})-(\d{2})-(\d{4})$/);
+    if (mdyMatch) return `${mdyMatch[3]}-${mdyMatch[1]}-${mdyMatch[2]}`;
+    if (dateStr.includes('-')) return dateStr;
+    if (dateStr.length === 8) {
+      return `${dateStr.substring(0, 4)}-${dateStr.substring(4, 6)}-${dateStr.substring(6, 8)}`;
+    }
+    return null;
+  };
+
+  const getSeasonDefaults = () => {
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const start = '2026-04-21';
+    if (todayStr < start) return { start, end: start };
+    if (todayStr <= '2026-09-13') return { start, end: todayStr };
+    return { start, end: '2026-09-13' };
+  };
+
+  const seasonDefaults = getSeasonDefaults();
+  const finalStartDate = parseDateInput(startDate) || seasonDefaults.start;
+  const finalEndDate = parseDateInput(endDate) || seasonDefaults.end;
+
+  if (new Date(`${finalStartDate}T00:00:00Z`) > new Date(`${finalEndDate}T00:00:00Z`)) {
+    return { error: 'invalid_range', status: 400, message: 'Start date must be on or before end date.' };
+  }
+  if (new Date(`${finalEndDate}T00:00:00Z`) > today) {
+    return { error: 'future_date', status: 404, message: 'No Data Available Yet For The Selected Period' };
+  }
+  return { finalStartDate, finalEndDate };
+}
+
+/**
+ * Applies the pitch-group category filter (Fastballs / Breaking / Offspeed) to a
+ * pitch array. Shared by the range and batter-card endpoints. 'All' / falsy = no filter.
+ */
+function filterByPitchGroup(pitches, pitchGroup) {
+  if (!pitchGroup || pitchGroup === 'All') return pitches;
+  const fastballs = ['Four-Seam', 'Sinker', 'Cutter'];
+  const breaking  = ['Slider', 'Curveball'];
+  const offspeed  = ['Changeup', 'ChangeUp', 'Splitter'];
+  return pitches.filter(p => {
+    const pt = p.auto_pitch_type || p.tagged_pitch_type;
+    if (pitchGroup === 'Fastballs') return fastballs.includes(pt);
+    if (pitchGroup === 'Breaking')  return breaking.includes(pt);
+    if (pitchGroup === 'Offspeed')  return offspeed.includes(pt);
+    return true;
+  });
+}
+
+/**
+ * GET /api/batters
+ * Returns the distinct batter list for the batter-first selection flow, built
+ * entirely from the in-memory /players lookup cache — no pitch-space scan.
+ * Hitters are deduped by (trimmed) name so the duplicate-whitespace / split-id
+ * records the league DB carries collapse into one pickable batter that still
+ * carries ALL of its player_ids (the card endpoint queries every id and merges,
+ * so a batter whose pitches live under a different id than its team-tagged
+ * record is never lost).
+ * @returns {Object} { batters: [{ name, ids:[...], team, bats }], count }
+ */
+const battersHandler = async (req, res) => {
+  try {
+    // On Vercel the lookup cache warms in the background; build it on demand if empty.
+    if (lookupCache.players.size === 0) {
+      await populateLookupCaches();
+    }
+
+    const byName = new Map(); // trimmedName -> { name, ids:Set, team, bats }
+    for (const p of lookupCache.players.values()) {
+      if (!p.is_hitter) continue;
+      const name = (p.player_name || '').trim();
+      if (!name || !/[A-Za-z]/.test(name)) continue; // drop empty / punctuation-only records
+      let entry = byName.get(name);
+      if (!entry) {
+        entry = { name, ids: new Set(), team: null, bats: null };
+        byName.set(name, entry);
+      }
+      entry.ids.add(p.player_id);
+      // team_name is unreliable/sparse in /players; take the first non-null we see
+      // (used only to label the picker — the card derives the real team from the pitches).
+      if (!entry.team && p.team_name) entry.team = p.team_name;
+      if (!entry.bats && p.player_batting_handedness) entry.bats = p.player_batting_handedness;
+    }
+
+    const batters = [...byName.values()]
+      .map(e => ({ name: e.name, ids: [...e.ids], team: e.team || '', bats: e.bats || '' }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    res.json({ batters, count: batters.length });
+  } catch (error) {
+    console.error('Error building batter list:', error.message);
+    res.status(500).json({ error: 'batters_failed', message: error.message });
+  }
+};
+
+/**
+ * GET /api/batter/card
+ * Returns scouting-card data for ONE batter, scoped to that batter's pitches.
+ * This is the batter-first flow's data query: pitches are fetched with a
+ * `batter_id` filter (a few hundred records), never the whole date-range space.
+ * Response shape matches GET /api/teams/range ({ teamsData, metadata }) so the
+ * client renders it through the same decode/aggregate path.
+ * @query {string} batterIds - Comma-separated SLUGGER player UUID(s) for the chosen batter.
+ * @query {string} [startDate] - Start date; defaults to season start.
+ * @query {string} [endDate] - End date; defaults to today/season end.
+ * @query {number} [maxVelocity] - Exclude pitches faster than this (mph).
+ * @query {string} [pitchGroup] - 'All' | 'Fastballs' | 'Breaking' | 'Offspeed'.
+ */
+const batterCardHandler = async (req, res) => {
+  try {
+    const { batterIds, startDate, endDate, maxVelocity, pitchGroup } = req.query;
+
+    const ids = (batterIds || '').split(',').map(s => s.trim()).filter(Boolean);
+    if (ids.length === 0) {
+      return res.status(400).json({ error: 'missing_batter', message: 'Select a batter first.' });
+    }
+
+    const range = resolveDateRange(startDate, endDate);
+    if (range.error) {
+      return res.status(range.status).json({ error: range.error, message: range.message });
+    }
+    const { finalStartDate, finalEndDate } = range;
+
+    console.log(`\nBatter card: ${ids.length} id(s), ${finalStartDate} → ${finalEndDate}`);
+
+    // Scoped fetch — one query per id, merged. Never touches the full pitch space.
+    let pitches = [];
+    for (const id of ids) {
+      const part = await fetchPitchesForBatter(id, finalStartDate, finalEndDate);
+      if (part && part.length) pitches.push(...part);
+    }
+
+    if (pitches.length === 0) {
+      return res.status(404).json({
+        error: 'no_data',
+        message: 'No pitch data found for this batter in the selected window.'
+      });
+    }
+
+    pitches = filterByPitchGroup(pitches, pitchGroup);
+
+    const parsedMaxVelocity = maxVelocity ? parseFloat(maxVelocity) : 999;
+    const teamsData = transformPitchDataToTeams(pitches, {}, parsedMaxVelocity);
+
+    const totalPlayers = Object.values(teamsData).reduce((sum, team) => sum + team.length, 0);
+    if (totalPlayers === 0) {
+      return res.status(404).json({
+        error: 'no_data_velocity',
+        message: 'No pitch data for this batter in the selected velocity range.'
+      });
+    }
+
+    const wire = encodePitchZonesColumnar(teamsData);
+
+    res.json({
+      teamsData: wire.teamsData,
+      metadata: {
+        startDate: finalStartDate,
+        endDate: finalEndDate,
+        filesProcessed: pitches.length,
+        pitchesFilteredByVelocity: countPitchesByVelocity(pitches, parsedMaxVelocity),
+        pzLegend: wire.pzLegend
+      }
+    });
+  } catch (error) {
+    console.error('Error building batter card:', error.message);
+    res.status(500).json({ error: 'card_failed', message: error.message });
+  }
+};
+
 
 
 // API health handler
@@ -1301,11 +1540,15 @@ const apiHealthHandler = (req, res) => {
 };
 
 // Register API routes at root level
+app.get('/api/batters', battersHandler);
+app.get('/api/batter/card', batterCardHandler);
 app.get('/api/teams/range', teamsRangeHandler);
 app.get('/api/health', apiHealthHandler);
 
 // Also register API routes at BASE_PATH for ALB routing
 if (BASE_PATH) {
+  app.get(`${BASE_PATH}/api/batters`, battersHandler);
+  app.get(`${BASE_PATH}/api/batter/card`, batterCardHandler);
   app.get(`${BASE_PATH}/api/teams/range`, teamsRangeHandler);
   app.get(`${BASE_PATH}/api/health`, apiHealthHandler);
 }

@@ -1,5 +1,8 @@
 let TEAMS_DATA = {};
 let METADATA = null;
+// Distinct-batter index for the batter-first flow, from GET /api/batters (cheap,
+// no pitch-space scan). Array of { name, ids:[...], team, bats }, sorted by name.
+let BATTERS_INDEX = [];
 let cachedSeasonData = null;
 let cachedDateRange = { start: null, end: null, maxVelocity: null, pitchGroup: null };
 // Default settings
@@ -562,9 +565,14 @@ const stripPercents = (text) => {
 class FlashcardApp {
   constructor(container) {
     this.container = container;
-    this.currentScreen = 'dateSelect';
+    // Batter-first flow: start on a loading screen while the cheap batter index
+    // loads, then land on the batter picker (not a whole-season date fetch).
+    this.currentScreen = 'loading';
     this.selectedTeam = null;
     this.selectedBatterIndex = 0;
+    this.selectedBatterInfo = null;   // { name, ids, team, bats } chosen in the picker
+    this.batterQuery = '';            // live search text on the batter picker
+    this.lastMaxVelocity = 105;       // retained pitch-window scope for Prev/Next + re-scope
     this.showInfoPanel = false;
     this.showSettingsPanel = false;
     // Settings live in an always-visible docked sidebar by default (never printed).
@@ -580,7 +588,7 @@ class FlashcardApp {
     this.lastStartDate = defaults.start;
     this.lastEndDate = defaults.end;
     this.ensurePrintContainers();
-    this.render();
+    this.loadBattersIndex();
   }
   ensurePrintContainers() {
     if (!document.getElementById('print-container')) {
@@ -735,6 +743,175 @@ printCurrentCard() {
     CURRENT_SETTINGS = { ...DEFAULT_SETTINGS };
     this.render();
   }
+
+  /**
+   * Clears the pitch-scoped display selections so one batter's choices never
+   * carry over to the next (hidden pitch types, pitcher-hand split, good/bad-only).
+   * Purely visual prefs (circle size, max displayed) are intentionally kept.
+   */
+  resetBatterScopedSettings() {
+    CURRENT_SETTINGS.pitcherHandFilter = 'All';
+    CURRENT_SETTINGS.hiddenPitchTypes = [];
+    CURRENT_SETTINGS.showOnlyGoodPitches = false;
+    CURRENT_SETTINGS.showOnlyBadPitches = false;
+  }
+
+  /**
+   * Loads the distinct-batter index from GET /api/batters (cheap — built from the
+   * server's in-memory player cache, no pitch-space scan) and lands on the picker.
+   */
+  async loadBattersIndex() {
+    try {
+      this.currentScreen = 'loading';
+      this.loadingParams = null; // null => "loading the batter list" variant
+      this.render();
+
+      const response = await fetch('./api/batters');
+      const data = await response.json();
+      if (!response.ok || !Array.isArray(data.batters)) {
+        throw new Error(data.message || `Failed to load batters (${response.status})`);
+      }
+
+      BATTERS_INDEX = data.batters;
+      this.currentScreen = 'batterSelect';
+      this.render();
+    } catch (err) {
+      console.error(err);
+      this.error = `Could not load the batter list: ${err.message}`;
+      this.currentScreen = 'error';
+      this.render();
+    }
+  }
+
+  /**
+   * Selects a batter from the picker and loads their card for the default full-season
+   * window. This is step 1 of the inverted flow — every pitch query after this is
+   * scoped to the chosen batter.
+   * @param {{name:string, ids:string[], team:string, bats:string}} batter
+   */
+  selectBatter(batter) {
+    this.selectedBatterInfo = batter;
+    this.resetBatterScopedSettings();
+    const season = getFullSeasonRange();
+    const dateLabel = season.year === 2026 ? '2026 Season' : `Full ${season.year} Season`;
+    this.loadBatterCard(season.start, season.end, 105, 'All', dateLabel);
+  }
+
+  /**
+   * Fetches the scoped scouting card for the currently selected batter from
+   * GET /api/batter/card (filtered by batter_id — never the whole pitch space).
+   * @param {string} startDate - ISO date (YYYY-MM-DD).
+   * @param {string} endDate - ISO date (YYYY-MM-DD).
+   * @param {number} [maxVelocity=105] - Upper velocity cap (mph).
+   * @param {string} [pitchGroup='All'] - 'All' | 'Fastballs' | 'Breaking' | 'Offspeed'.
+   * @param {string|null} [dateLabel=null] - Friendly window label for the loading screen.
+   */
+  async loadBatterCard(startDate, endDate, maxVelocity = 105, pitchGroup = 'All', dateLabel = null) {
+    const batter = this.selectedBatterInfo;
+    if (!batter || !batter.ids || batter.ids.length === 0) {
+      this.currentScreen = 'batterSelect';
+      this.render();
+      return;
+    }
+
+    // Retain the window so Prev/Next and re-scopes reuse it.
+    this.lastStartDate = startDate;
+    this.lastEndDate = endDate;
+    this.lastMaxVelocity = maxVelocity;
+    this.lastPitchGroup = pitchGroup;
+
+    try {
+      this.currentScreen = 'loading';
+      const pitchLabel = { All: 'All Pitches', Fastballs: 'Fastballs', Breaking: 'Breaking Balls', Offspeed: 'Offspeed' }[pitchGroup] || 'All Pitches';
+      this.loadingParams = { pitchGroup: pitchLabel, maxVelocity, startDate, endDate, dateLabel, batterName: batter.name };
+      this.render();
+
+      const ids = encodeURIComponent(batter.ids.join(','));
+      const response = await fetch(
+        `./api/batter/card?batterIds=${ids}&startDate=${startDate}&endDate=${endDate}&maxVelocity=${maxVelocity}&pitchGroup=${pitchGroup}`
+      );
+      const data = await response.json();
+
+      if (!response.ok) {
+        const code = data.error || 'unknown';
+        if (code === 'no_data' || code === 'no_data_velocity') {
+          this.noDataMessage = data.message || 'No pitch data found for this batter in the selected window.';
+          this.currentScreen = 'batterNoData';
+          this.render();
+          return;
+        }
+        this.error = data.message || `Error loading data (${response.status})`;
+        this.currentScreen = 'error';
+        this.render();
+        return;
+      }
+
+      if (!data.teamsData || Object.keys(data.teamsData).length === 0) {
+        this.noDataMessage = 'No pitch data found for this batter in the selected window.';
+        this.currentScreen = 'batterNoData';
+        this.render();
+        return;
+      }
+
+      decodePitchZones(data.teamsData, data.metadata && data.metadata.pzLegend);
+      TEAMS_DATA = data.teamsData;
+      METADATA = data.metadata;
+
+      // The scoped response holds only this batter (two profiles if a switch hitter,
+      // split across teams only if traded mid-season). Show the profile with the most
+      // pitches so a switch hitter opens on his primary side.
+      const teamKeys = Object.keys(TEAMS_DATA);
+      this.selectedTeam = teamKeys.reduce((best, t) => {
+        const tp = TEAMS_DATA[t].reduce((s, b) => s + (b.stats?.totalPitches || 0), 0);
+        const bp = TEAMS_DATA[best].reduce((s, b) => s + (b.stats?.totalPitches || 0), 0);
+        return tp > bp ? t : best;
+      }, teamKeys[0]);
+      const roster = TEAMS_DATA[this.selectedTeam];
+      this.selectedBatterIndex = roster.reduce((best, b, i) =>
+        (b.stats?.totalPitches || 0) > (roster[best].stats?.totalPitches || 0) ? i : best, 0);
+
+      this.currentScreen = 'flashcard';
+      this.setupKeyboard();
+      this.render();
+    } catch (err) {
+      console.error(err);
+      this.error = `Error loading data: ${err.message}`;
+      this.currentScreen = 'error';
+      this.render();
+    }
+  }
+
+  /**
+   * Moves to the previous/next batter in the alphabetical index, reusing the
+   * current pitch window. Each hop is a fresh scoped query for that batter only.
+   * @param {number} delta - +1 for next, -1 for previous.
+   */
+  gotoAdjacentBatter(delta) {
+    if (!BATTERS_INDEX.length || !this.selectedBatterInfo) return;
+    const cur = this.selectedBatterInfo;
+    let idx = BATTERS_INDEX.findIndex(b => b.name === cur.name && b.ids[0] === cur.ids[0]);
+    if (idx < 0) idx = BATTERS_INDEX.findIndex(b => b.name === cur.name);
+    if (idx < 0) return;
+    const next = BATTERS_INDEX[(idx + delta + BATTERS_INDEX.length) % BATTERS_INDEX.length];
+    this.selectedBatterInfo = next;
+    this.resetBatterScopedSettings();
+    this.loadBatterCard(this.lastStartDate, this.lastEndDate, this.lastMaxVelocity, this.lastPitchGroup || 'All');
+  }
+
+  showBatterSelect() {
+    this.currentScreen = 'batterSelect';
+    this.validationError = null;
+    this.noDataError = null;
+    this.render();
+  }
+
+  showWindowSelect() {
+    this.currentScreen = 'dateSelect';
+    this.validationError = null;
+    this.noDataError = null;
+    this.render();
+  }
+
 /**
    * Fetches processed pitch data for the given date range from GET /api/teams/range.
    * Transitions the app through loading → teamSelect on success, or shows contextual error messages
@@ -874,7 +1051,8 @@ try {
       this.lastStartDate = startStr;
       this.lastEndDate = endStr;
       const dateLabel = days === 7 ? 'Last 7 Days' : days === 30 ? 'Last 30 Days' : null;
-      this.loadDataRange(startStr, endStr, maxVel, seasonYear, pitchGroup, dateLabel);
+      // Batter-first flow: the window fetch is scoped to the already-chosen batter.
+      this.loadBatterCard(startStr, endStr, maxVel, pitchGroup, dateLabel);
 }
 
   showDateSelect() {
@@ -896,13 +1074,11 @@ try {
     if (this.keyHandler) window.removeEventListener('keydown', this.keyHandler);
     this.keyHandler = e => {
       if (this.currentScreen !== 'flashcard') return;
-      const lineup = TEAMS_DATA[this.selectedTeam];
+      // Arrows now browse the batter index (each hop is a fresh scoped query).
       if (e.key === 'ArrowRight') {
-        this.selectedBatterIndex = (this.selectedBatterIndex + 1) % lineup.length;
-        this.render();
+        this.gotoAdjacentBatter(1);
       } else if (e.key === 'ArrowLeft') {
-        this.selectedBatterIndex = (this.selectedBatterIndex - 1 + lineup.length) % lineup.length;
-        this.render();
+        this.gotoAdjacentBatter(-1);
       }
     };
     window.addEventListener('keydown', this.keyHandler);
@@ -917,11 +1093,20 @@ try {
       el.textContent = '.'.repeat(dotCount);
     }, 500);
 
+    // Initial batter-index load has no window params — show a lightweight message.
+    if (!this.loadingParams) {
+      return createElement('div', { className: 'team-select-screen loading-screen' },
+        createElement('h1', {}, 'Loading Batters', dotsSpan),
+        createElement('p', { className: 'loading-subtitle' }, 'Fetching the batter list')
+      );
+    }
+
     const params = this.loadingParams || {};
     const pillRow = [
+      params.batterName ? createElement('div', { className: 'filter-pill pill-season' }, params.batterName) : null,
       createElement('div', { className: 'filter-pill pill-pitch' }, params.pitchGroup || 'All Pitches'),
       createElement('div', { className: 'filter-pill pill-velo' }, `≤ ${params.maxVelocity || 105} MPH`),
-    ];
+    ].filter(Boolean);
     let seasonText;
     if (params.dateLabel) {
       seasonText = params.dateLabel;
@@ -954,17 +1139,21 @@ try {
           lineHeight: '1.5'
         }
       }, this.error),
-      createElement('button', { className: 'team-btn', onclick: () => this.showDateSelect() }, 'Back')
+      createElement('button', { className: 'team-btn', onclick: () => (BATTERS_INDEX.length ? this.showBatterSelect() : this.loadBattersIndex()) }, 'Back to Batters')
     );
   }
   renderDateSelect() {
-  
+    // Reached AFTER a batter is chosen: this narrows the pitch window for that
+    // one batter (every load here is scoped to the selected batter's pitches).
+    const batterName = this.selectedBatterInfo ? this.selectedBatterInfo.name : 'Batter';
+
     return createElement('div', { className: 'team-select-screen' },
-      createElement('h1', {}, 'Batter Flashcard'),
+      this.selectedBatterInfo ? createElement('button', { className: 'back-btn', style: { marginBottom: '12px' }, onclick: () => this.loadBatterCard(this.lastStartDate, this.lastEndDate, this.lastMaxVelocity, this.lastPitchGroup || 'All') }, '← Back to Card') : null,
+      createElement('h1', {}, `Pitch Window — ${batterName}`),
       createElement('p', { style: { 'margin-bottom': '20px', opacity: '0.8', fontSize: '15px', color: '#64748b', lineHeight: '1.4' } },
-        'Start by Adjusting the Velocity, Selecting a Pitch Type, and Choosing a Timeframe'
+        'Adjust the Velocity, Pitch Type, and Timeframe, then reload this batter’s card'
       ),
-      
+
       createElement('div', {
         style: {
           'max-width': '600px', margin: '0 auto', display: 'flex',
@@ -1165,7 +1354,8 @@ createElement('div', { style: { flex: 1 } },
               this.noDataError = null;
               this.lastStartDate = startRaw;
               this.lastEndDate = endRaw;
-              this.loadDataRange(startRaw, endRaw, maxVel, null, pitchGroup);
+              // Batter-first flow: the custom window fetch is scoped to the chosen batter.
+              this.loadBatterCard(startRaw, endRaw, maxVel, pitchGroup);
             }
           }, 'Load Custom Range'),
           this.validationError ? createElement('div', {
@@ -1321,6 +1511,88 @@ createElement('div', { style: { flex: 1 } },
       createElement('div', { className: 'lineup-grid' }, ...cards)
     );
   }
+
+  /**
+   * Step 1 of the inverted flow: pick a batter. The list comes from the cheap
+   * distinct-batter index (BATTERS_INDEX) — no pitch-space scan. Typing filters
+   * the list in place (without a full re-render, so the search box keeps focus).
+   */
+  renderBatterSelect() {
+    const handBadge = (bats) => {
+      const short = bats === 'Left' ? 'L' : bats === 'Right' ? 'R' : bats === 'Switch' ? 'S' : '–';
+      const bg = bats === 'Left' ? '#dbeafe' : bats === 'Right' ? '#fee2e2' : bats === 'Switch' ? '#ede9fe' : '#e5e7eb';
+      const fg = bats === 'Left' ? '#1e40af' : bats === 'Right' ? '#b91c1c' : bats === 'Switch' ? '#6d28d9' : '#475569';
+      return createElement('span', {
+        style: { flex: '0 0 auto', minWidth: '22px', textAlign: 'center', fontWeight: '700', fontSize: '12px', padding: '2px 7px', borderRadius: '999px', background: bg, color: fg }
+      }, short);
+    };
+
+    const buildRows = (query) => {
+      const q = (query || '').trim().toLowerCase();
+      const matches = q
+        ? BATTERS_INDEX.filter(b => b.name.toLowerCase().includes(q) || (b.team || '').toLowerCase().includes(q))
+        : BATTERS_INDEX;
+      if (matches.length === 0) {
+        return [createElement('div', { style: { padding: '20px', textAlign: 'center', color: '#64748b' } }, 'No batters match your search.')];
+      }
+      return matches.map(b => createElement('div', {
+        className: 'batter-pick-row',
+        style: { display: 'flex', alignItems: 'center', gap: '12px', padding: '11px 14px', borderBottom: '1px solid #eef2f7', cursor: 'pointer' },
+        onclick: () => this.selectBatter(b)
+      },
+        createElement('span', { style: { flex: '1 1 auto', fontWeight: '600', color: '#1e293b' } }, b.name),
+        b.team ? createElement('span', { style: { flex: '0 1 auto', fontSize: '12px', color: '#64748b', textAlign: 'right' } }, b.team) : null,
+        handBadge(b.bats)
+      ));
+    };
+
+    const listEl = createElement('div', {
+      id: 'batter-list',
+      style: { maxWidth: '620px', margin: '0 auto', textAlign: 'left', background: 'white', border: '1px solid #e9ecef', borderRadius: '12px', overflow: 'hidden', maxHeight: '62vh', overflowY: 'auto' }
+    }, ...buildRows(this.batterQuery));
+
+    const searchEl = createElement('input', {
+      id: 'batterSearch', type: 'search', value: this.batterQuery || '',
+      placeholder: 'Search batter or team…',
+      style: { width: '100%', maxWidth: '620px', margin: '0 auto 16px', display: 'block', boxSizing: 'border-box', padding: '12px 14px', fontSize: '15px', border: '1px solid #cbd5e1', borderRadius: '10px' },
+      oninput: (e) => {
+        this.batterQuery = e.target.value;
+        const l = document.getElementById('batter-list');
+        if (l) { l.innerHTML = ''; buildRows(this.batterQuery).forEach(r => l.appendChild(r)); }
+      }
+    });
+
+    return createElement('div', { className: 'team-select-screen' },
+      createElement('h1', {}, 'Select a Batter'),
+      createElement('p', { style: { 'margin-bottom': '16px', fontSize: '15px', color: '#64748b', lineHeight: '1.4' } },
+        'Pick a batter to load their scouting card — pitch data is fetched only for the batter you choose.'
+      ),
+      createElement('div', { style: { textAlign: 'center', marginBottom: '14px' } },
+        createElement('span', { className: 'info-bubble' }, `${BATTERS_INDEX.length} batters`)
+      ),
+      searchEl,
+      listEl
+    );
+  }
+
+  /**
+   * Shown when a chosen batter has no pitches in the selected window — a clear
+   * prompt (not an error) with ways forward.
+   */
+  renderBatterNoData() {
+    const name = this.selectedBatterInfo ? this.selectedBatterInfo.name : 'This batter';
+    return createElement('div', { className: 'team-select-screen' },
+      createElement('h1', {}, name),
+      createElement('p', { style: { fontSize: '17px', color: '#64748b', margin: '18px auto', maxWidth: '520px', lineHeight: '1.5' } },
+        this.noDataMessage || 'No pitch data found for this batter in the selected window.'
+      ),
+      createElement('div', { style: { display: 'flex', gap: '10px', justifyContent: 'center', flexWrap: 'wrap' } },
+        createElement('button', { className: 'team-btn', onclick: () => this.showBatterSelect() }, '← Choose Another Batter'),
+        createElement('button', { className: 'team-btn', onclick: () => this.showWindowSelect() }, 'Change Pitch Window')
+      )
+    );
+  }
+
   renderSettingsPanel(rawCount = 0, filteredCount = 0, goodCount = 0, badCount = 0, displayedCount = 0, displayedGoodCount = 0, displayedBadCount = 0, statsTotalPitches = 0, docked = false) {
     const sliderMax = filteredCount;
     // Compute effective display value without mutating the setting — slice(0, N) handles the real cap naturally
@@ -1557,19 +1829,14 @@ createElement('div', { style: { flex: 1 } },
         ),
         //test for fork
         createElement('div', { className: 'header__controls' },
-          createElement('span', { className: 'chip back-chip', onclick: () => this.showLineup(this.selectedTeam) }, '← Lineup'),
+          createElement('span', { className: 'chip back-chip', onclick: () => this.showBatterSelect() }, '← Batters'),
+          createElement('span', { className: 'chip', onclick: () => this.showWindowSelect() }, '⚙ Window'),
           createElement('span', { className: 'chip print-chip', onclick: () => this.printCurrentCard() }, 'Print'),
           createElement('span', {
-            className: 'chip', onclick: () => {
-              this.selectedBatterIndex = (this.selectedBatterIndex - 1 + lineup.length) % lineup.length;
-              this.render();
-            }
+            className: 'chip', onclick: () => this.gotoAdjacentBatter(-1)
           }, '← Prev'),
           createElement('span', {
-            className: 'chip', onclick: () => {
-              this.selectedBatterIndex = (this.selectedBatterIndex + 1) % lineup.length;
-              this.render();
-            }
+            className: 'chip', onclick: () => this.gotoAdjacentBatter(1)
           }, 'Next →')
         )
       ),
@@ -1763,6 +2030,8 @@ createElement('div', { style: { flex: 1 } },
     let content;
     if (this.currentScreen === 'loading') content = this.renderLoading();
     else if (this.currentScreen === 'error') content = this.renderError();
+    else if (this.currentScreen === 'batterSelect') content = this.renderBatterSelect();
+    else if (this.currentScreen === 'batterNoData') content = this.renderBatterNoData();
     else if (this.currentScreen === 'dateSelect') content = this.renderDateSelect();
     else if (this.currentScreen === 'teamSelect') content = this.renderTeamSelect();
     else if (this.currentScreen === 'lineup') content = this.renderLineup();
