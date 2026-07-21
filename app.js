@@ -401,6 +401,7 @@ const stripPercents = (text) => {
     return text
       .replace(/\((\d+)\/(\d+)\s*=\s*\d+%\)/g, '($1 of $2 outs)')
       .replace(/\d+\s*%/g, '')
+      .replace(/\s*\(\s*\)/g, '')
       .replace(/\s{2,}/g, ' ')
       .trim();
   };
@@ -566,8 +567,13 @@ class FlashcardApp {
     this.selectedBatterIndex = 0;
     this.showInfoPanel = false;
     this.showSettingsPanel = false;
-    // Settings live in an always-visible docked sidebar by default (never printed)
-    this.isSettingsDocked = true;
+    // Settings live in an always-visible docked sidebar by default (never printed).
+    // Below the 768px breakpoint the docked sidebar becomes a full-screen fixed
+    // overlay (see styles.css @media max-width:768px), so it must start closed
+    // there — otherwise a first-time phone/tablet user sees only the settings
+    // panel with the flashcard hidden behind it. On narrow viewports the user
+    // opens it on demand via the "⚙ Show Settings" button.
+    this.isSettingsDocked = !(window.matchMedia && window.matchMedia('(max-width: 768px)').matches);
     this.sortBy = 'number';
     this.sortOrder = 'asc';
     const defaults = getDefaultSeasonDates();

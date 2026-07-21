@@ -771,7 +771,7 @@ function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 9
               const [secondSeq, secondCount] = significantSequences[1];
               const secondPct = Math.round(secondCount / total * 100);
               if (secondPct >= 25) {
-                text += ` • Also: ${secondSeq} (${secondPct}%)`;
+                text += ` • Also: ${secondSeq} (${secondCount}/${total} = ${secondPct}%)`;
               }
             }
 
