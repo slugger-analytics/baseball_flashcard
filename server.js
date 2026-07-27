@@ -7,6 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const { withParserAsStream } = require('stream-json/streamers/stream-array.js');
 const { SWUNG_CALLS } = require('./lib/stats.js');
+const { buildCanonicalNameMap, dedupeBatters } = require('./lib/players.js');
 
 // Vercel's and Lambda's filesystems are read-only except /tmp; use /tmp there, local cache/ elsewhere.
 const CACHE_DIR = (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME)
@@ -80,7 +81,7 @@ const SLUGGER_CONFIG = {
   apiKey: process.env.SLUGGER_API_KEY 
 };
 
-const lookupCache = { players: new Map(), teams: new Map(), ballparks: new Map() };
+const lookupCache = { players: new Map(), teams: new Map(), ballparks: new Map(), canonicalNames: new Map() };
 
 const TEAM_DISPLAY_NAMES = {
   'YOR': 'York Revolution', 'LI': 'Long Island Ducks', 'LAN': 'Lancaster Stormers',
@@ -183,6 +184,9 @@ async function populateLookupCaches() {
   try {
     const players = await fetchAllPages('/players');
     players.forEach(p => { if (p.player_id && p.player_name) lookupCache.players.set(p.player_id, p); });
+    // Canonical display name per person, so case-variant duplicate rows in the
+    // league DB ("Bates, Austin" vs "bates, austin") resolve to one display name.
+    lookupCache.canonicalNames = buildCanonicalNameMap(lookupCache.players.values());
     console.log(`✅ Cached ${lookupCache.players.size} players`);
 
     const teams = await fetchAllPages('/teams');
@@ -210,17 +214,19 @@ app.get('/api/cache-status', (req, res) => {
 });
 
 /**
- * Resolves a player ID to a display name using the in-memory cache.
- * Names are trimmed: the league DB contains duplicate player records that
- * differ only by trailing whitespace (e.g. "Brigman, Bryson " vs
- * "Brigman, Bryson"), and batters are keyed by name — without trimming, one
- * player fragments into two lineup cards with split stats.
+ * Resolves a player ID to its canonical display name using the in-memory cache.
+ * Names are trimmed (the league DB has duplicate records differing only by
+ * trailing whitespace, e.g. "Brigman, Bryson " vs "Brigman, Bryson") AND
+ * case-normalized to the canonical variant (e.g. "bates, austin" → "Bates,
+ * Austin"), so a player never fragments into two cards with split stats.
  * @param {string} id - SLUGGER player UUID.
- * @returns {string} Player's full name, or a fallback identifier if not found.
+ * @returns {string} Player's canonical full name, or a fallback identifier if not found.
  */
 function getPlayerName(id) {
-  const name = lookupCache.players.get(id)?.player_name;
-  return (name && name.trim()) || `Player-${id?.substring(0, 8) || 'Unknown'}`;
+  const raw = lookupCache.players.get(id)?.player_name;
+  const trimmed = raw && raw.trim();
+  if (!trimmed) return `Player-${id?.substring(0, 8) || 'Unknown'}`;
+  return lookupCache.canonicalNames.get(trimmed.toLowerCase()) || trimmed;
 }
 
 /**
@@ -1412,11 +1418,11 @@ function filterByPitchGroup(pitches, pitchGroup) {
  * GET /api/batters
  * Returns the distinct batter list for the batter-first selection flow, built
  * entirely from the in-memory /players lookup cache — no pitch-space scan.
- * Hitters are deduped by (trimmed) name so the duplicate-whitespace / split-id
- * records the league DB carries collapse into one pickable batter that still
- * carries ALL of its player_ids (the card endpoint queries every id and merges,
- * so a batter whose pitches live under a different id than its team-tagged
- * record is never lost).
+ * Hitters are deduped by canonical (case-insensitive, trimmed) name so the
+ * duplicate-whitespace / duplicate-case / split-id records the league DB carries
+ * collapse into one pickable batter that still carries ALL of its player_ids (the
+ * card endpoint queries every id and merges, so a batter whose pitches live under
+ * a different id than its team-tagged record is never lost).
  * @returns {Object} { batters: [{ name, ids:[...], team, bats }], count }
  */
 const battersHandler = async (req, res) => {
@@ -1426,26 +1432,9 @@ const battersHandler = async (req, res) => {
       await populateLookupCaches();
     }
 
-    const byName = new Map(); // trimmedName -> { name, ids:Set, team, bats }
-    for (const p of lookupCache.players.values()) {
-      if (!p.is_hitter) continue;
-      const name = (p.player_name || '').trim();
-      if (!name || !/[A-Za-z]/.test(name)) continue; // drop empty / punctuation-only records
-      let entry = byName.get(name);
-      if (!entry) {
-        entry = { name, ids: new Set(), team: null, bats: null };
-        byName.set(name, entry);
-      }
-      entry.ids.add(p.player_id);
-      // team_name is unreliable/sparse in /players; take the first non-null we see
-      // (used only to label the picker — the card derives the real team from the pitches).
-      if (!entry.team && p.team_name) entry.team = p.team_name;
-      if (!entry.bats && p.player_batting_handedness) entry.bats = p.player_batting_handedness;
-    }
-
-    const batters = [...byName.values()]
-      .map(e => ({ name: e.name, ids: [...e.ids], team: e.team || '', bats: e.bats || '' }))
-      .sort((a, b) => a.name.localeCompare(b.name));
+    // Dedupe by canonical (case-insensitive, trimmed) name: union all player_ids,
+    // keep the canonical display name, and merge bats preferring 'Switch'.
+    const batters = dedupeBatters(lookupCache.players.values());
 
     res.json({ batters, count: batters.length });
   } catch (error) {
@@ -1584,6 +1573,12 @@ if (process.env.VERCEL) {
 }
 
 module.exports = app;
+
+// Test seam: when required as a module (never as the production entrypoint), expose
+// the in-memory lookup cache so the unit suite can seed players without a network call.
+if (require.main !== module) {
+  app.__lookupCache = lookupCache;
+}
 
 if (require.main === module) {
   startServer().catch(console.error);
