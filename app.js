@@ -333,9 +333,6 @@ const stripPercents = (text) => {
   };
 
   const safeStats = stats || {};
-  const firstPitchSwingRate = safeStats.firstPitchPitches > 0
-    ? `${(safeStats.firstPitchSwings / safeStats.firstPitchPitches * 100).toFixed(0)}%`
-    : 'N/A';
 
   // Grab the live slider value for the UI
   const vulnThreshold = app ? CURRENT_SETTINGS.vulnerableZoneThreshold : 45;
@@ -417,8 +414,14 @@ const stripPercents = (text) => {
   const hotZoneCap = vulnThreshold <= 20 ? 2 : vulnThreshold <= 35 ? 4 : undefined;
   const cappedHotZones = hotZoneCap !== undefined ? hotZones.slice(0, hotZoneCap) : hotZones;
 
-  // let firstPitchText = stripPercents(tendencies?.firstStrike || `Swings ${firstPitchSwingRate} on first pitch`);
-  let firstPitchText = tendencies?.firstStrike || `Swings ${firstPitchSwingRate} on first pitch`;
+  // First-pitch approach: server ships "Label (NN%)" (swings ÷ PA′ over 0-0 pitches,
+  // graded ±25% vs the league). Secondary line carries the league avg or a pending note.
+  let firstPitchText = tendencies?.firstStrike || 'Not enough 0-0 pitches yet';
+  let firstPitchSubtext = null;
+  if (tendencies) {
+    if (tendencies.firstStrikePending) firstPitchSubtext = 'league avg pending';
+    else if (tendencies.firstStrikeLeagueAvg != null) firstPitchSubtext = `lg avg ${tendencies.firstStrikeLeagueAvg}%`;
+  }
   let sprayText = tendencies?.spray || 'All fields';
   const cleanedPowerSequence = stripPercents(
   (powerSequence && powerSequence !== 'Calculating...') ? powerSequence : 'Insufficient data'
@@ -431,6 +434,9 @@ const stripPercents = (text) => {
         createElement('button', { className: 'section-info-btn', onclick: (e) => { e.stopPropagation(); openInfoModal('first-pitch'); } }, 'ℹ')
       ),
       createElement('div', { className: 'power-sequence-text' }, firstPitchText),
+      firstPitchSubtext ? createElement('div', {
+        style: { fontSize: '11px', color: '#94a3b8', marginTop: '2px', textAlign: 'center' }
+      }, firstPitchSubtext) : null,
     ),
     cappedVulnerableZones.length > 0 ? createElement('div', { className: 'power-sequence vulnerable-zone' },
       createElement('h4', { style: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' } },
@@ -1967,12 +1973,14 @@ createElement('div', { style: { flex: 1 } },
               createElement('div', { className: 'info-entry__content' },
                 createElement('div', { className: 'info-entry__title' }, 'First-Pitch Approach'),
                 createElement('div', { className: 'info-entry__desc' },
-                  'Shows how often the batter swings at the first pitch. 70%+ swing rate = Aggressive. 35% or below = Patient. In between = Neutral. Use this to decide your opening pitch.'
+                  'How often the batter swings on 0-0 counts, as a share of true first-pitch decisions, compared to the league. The rate is judged against the league average: 25%+ above = Aggressive, 25%+ below = Patient, within ±25% = Neutral.'
                 ),
                 ...makeInfoExpand(
-                  createElement('p', {}, createElement('strong', {}, 'Aggressive (70%+): '), 'He\'s hunting the first pitch. Open with a first-pitch strike — he\'ll often swing early and make weak contact or miss. Don\'t waste it on a ball.'),
-                  createElement('p', {}, createElement('strong', {}, 'Patient (35% or below): '), 'He takes early to get ahead in the count. Get 0-1 without throwing your best pitch — then attack with your out pitch.'),
-                  createElement('p', {}, createElement('strong', {}, 'Neutral: '), 'Unpredictable — he might swing or take depending on the pitch. Read his recent at-bats and adjust mid-game.')
+                  createElement('p', {}, 'Rate = first-pitch swings ÷ PA′, where ', createElement('strong', {}, 'PA′'), ' = the batter\'s 0-0 pitches minus hit-by-pitches and no-decision calls (e.g. balls in the dirt). The league average is pooled over every 0-0 pitch in the league, season-to-date.'),
+                  createElement('p', {}, createElement('strong', {}, 'Aggressive (25%+ above league): '), 'He\'s hunting the first pitch. Open with a first-pitch strike — he\'ll often swing early and make weak contact or miss. Don\'t waste it on a ball.'),
+                  createElement('p', {}, createElement('strong', {}, 'Patient (25%+ below league): '), 'He takes early to get ahead in the count. Get 0-1 without throwing your best pitch — then attack with your out pitch.'),
+                  createElement('p', {}, createElement('strong', {}, 'Neutral (within ±25% of league): '), 'Unpredictable — he might swing or take depending on the pitch. Read his recent at-bats and adjust mid-game.'),
+                  createElement('p', { style: { color: '#64748b' } }, 'The line under the rate shows the league average, or "league avg pending" until a full-range load has computed it.')
                 )
               )
             )

@@ -6,7 +6,9 @@ const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
 const { withParserAsStream } = require('stream-json/streamers/stream-array.js');
-const { SWUNG_CALLS } = require('./lib/stats.js');
+const {
+  isZeroZeroPitch, classifyZeroZeroCall, firstPitchMetric, firstPitchLabel, poolLeagueFirstPitch,
+} = require('./lib/stats.js');
 const { buildCanonicalNameMap, dedupeBatters } = require('./lib/players.js');
 
 // Vercel's and Lambda's filesystems are read-only except /tmp; use /tmp there, local cache/ elsewhere.
@@ -546,9 +548,11 @@ function assessBuntThreat(batter) {
  * @param {Array} pitchData - Raw pitch records from the SLUGGER API.
  * @param {Object} [existingData={}] - Existing teams data to merge into (used for incremental builds).
  * @param {number} [maxVelocity=999] - Pitches above this speed (mph) are excluded.
+ * @param {number|null} [leagueFirstPitchAvg=null] - Pooled league first-pitch metric
+ *   (season-to-date) used to classify each batter's approach. null = league-avg pending.
  * @returns {Object} Map of team name → array of batter stat objects.
  */
-function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 999) {
+function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 999, leagueFirstPitchAvg = null) {
 
   const teamsData = { ...existingData }, batterMap = new Map();
   Object.entries(teamsData).forEach(([team, batters]) => {
@@ -582,7 +586,9 @@ function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 9
         context: `${pitch.top_or_bottom || 'Top'} ${pitch.inning || 1}, ${pitch.balls || 0}-${pitch.strikes || 0}`,
         battingOrder: pitch.pa_of_inning || teamsData[teamName].length + 1,
         pitchZones: [], zoneAnalysis: {},
-        stats: { totalPitches: 0, strikes: 0, balls: 0, swings: 0, contact: 0, fouls: 0, whiffs: 0, firstPitchPitches: 0, firstPitchSwings: 0, weakContact: 0, hardContact: 0 },
+        stats: { totalPitches: 0, strikes: 0, balls: 0, swings: 0, contact: 0, fouls: 0, whiffs: 0, weakContact: 0, hardContact: 0 },
+        // First-pitch approach tally over 0-0 pitches (internal; not shipped on the wire).
+        _fp: { zeroZero: 0, swung: 0, taken: 0, hbp: 0, other: 0 },
         plateAppearances: [], atBats: [], stolenBases: 0, caughtStealing: 0, bunts: 0,
         strikeoutSequences: [], strikeoutDetails: [], outSequences: [],
         tendencies: { firstStrike: 'Calculating...', buntThreat: 'Low', stealThreat: 'Low', spray: 'All fields' },
@@ -595,7 +601,7 @@ function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 9
     const paKey = `${pitch.inning}_${pitch.pa_of_inning}`;
     let currentPA = batterData.plateAppearances.find(pa => pa.key === paKey);
     if (!currentPA) {
-      currentPA = { key: paKey, pitches: [], result: null, isFirstPitch: true };
+      currentPA = { key: paKey, pitches: [], result: null };
       batterData.plateAppearances.push(currentPA);
     }
 
@@ -603,12 +609,11 @@ function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 9
     currentPA.pitches.push({ type: pitchType, call: pitch.pitch_call, count: `${pitch.balls}-${pitch.strikes}` });
 
     batterData.stats.totalPitches++;
-    if (currentPA.isFirstPitch) {
-      batterData.stats.firstPitchPitches++;
-      if (SWUNG_CALLS.includes(pitch.pitch_call)) {
-        batterData.stats.firstPitchSwings++;
-      }
-      currentPA.isFirstPitch = false;
+    // First-pitch approach uses the pre-pitch count fields (balls===0 && strikes===0),
+    // which route around the cross-game paKey collision entirely.
+    if (isZeroZeroPitch(pitch)) {
+      batterData._fp.zeroZero++;
+      batterData._fp[classifyZeroZeroCall(pitch.pitch_call)]++;
     }
 
     if (['StrikeCalled', 'StrikeSwinging', 'FoulBall', 'FoulBallFieldable', 'FoulBallNotFieldable'].includes(pitch.pitch_call)) batterData.stats.strikes++;
@@ -750,11 +755,19 @@ function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 9
   Object.values(teamsData).forEach(batters => {
     batters.forEach(batter => {
       if (batter.stats.totalPitches > 0) {
-        if (batter.stats.firstPitchPitches > 0) {
-          const rate = (batter.stats.firstPitchSwings / batter.stats.firstPitchPitches * 100);
-          batter.tendencies.firstStrike = rate >= 70 ? `Aggressive (${rate.toFixed(0)}%)`
-                                        : rate <= 35 ? `Patient (${rate.toFixed(0)}%)`
-                                        :              `Neutral (${rate.toFixed(0)}%)`;
+        // First-pitch approach: metric = swings / PA′ over 0-0 pitches, classified
+        // against the pooled league average (±25%). Missing league avg → Neutral +
+        // pending flag; the card is never blocked on it.
+        const fp = batter._fp || { swung: 0, taken: 0 };
+        const paPrime = fp.swung + fp.taken;
+        if (paPrime > 0) {
+          const metric = firstPitchMetric(fp);
+          const pct = Math.round(metric * 100);
+          const hasLeague = (leagueFirstPitchAvg != null && leagueFirstPitchAvg > 0);
+          const label = firstPitchLabel(metric, hasLeague ? leagueFirstPitchAvg : null);
+          batter.tendencies.firstStrike = `${label} (${pct}%)`;
+          batter.tendencies.firstStrikeLeagueAvg = hasLeague ? Math.round(leagueFirstPitchAvg * 100) : null;
+          batter.tendencies.firstStrikePending = !hasLeague;
         }
 
         // Use improved threat assessments
@@ -982,6 +995,56 @@ function encodePitchZonesColumnar(teamsData) {
   return { teamsData: wireTeams, pzLegend };
 }
 
+// ── League first-pitch approach baseline ──────────────────────────────────────
+// The pooled league metric (season-to-date) that per-batter approaches are graded
+// against. Computed on every full-range transform (user load or the prewarm cron),
+// held in memory and mirrored to CACHE_DIR so a cold container can recover the
+// newest value from disk. The batter card attaches it but is NEVER blocked on it.
+let leagueFirstPitchMemo = null; // { start, end, metric, tally, computedAt }
+
+function spanDays(start, end) {
+  const d = (new Date(`${end}T00:00:00Z`) - new Date(`${start}T00:00:00Z`)) / 86400000;
+  return Number.isFinite(d) ? d : 0;
+}
+
+/**
+ * Records a freshly-pooled league metric to the memo (keeping the widest / most
+ * season-to-date span) and to a small per-range JSON in CACHE_DIR.
+ */
+function recordLeagueFirstPitch(start, end, pool) {
+  if (!pool || pool.metric == null) return;
+  const rec = { start, end, metric: pool.metric, tally: pool.tally, computedAt: new Date().toISOString() };
+  if (!leagueFirstPitchMemo || spanDays(start, end) >= spanDays(leagueFirstPitchMemo.start, leagueFirstPitchMemo.end)) {
+    leagueFirstPitchMemo = rec;
+  }
+  try {
+    fs.writeFileSync(path.join(CACHE_DIR, `league_fp_${start}_${end}.json`), JSON.stringify(rec));
+  } catch (err) {
+    console.error('⚠️ league_fp write failed:', err.message);
+  }
+}
+
+/**
+ * Returns the newest available season-to-date league first-pitch metric, or null.
+ * Prefers the memo; on a cold container scans CACHE_DIR for the widest-span record.
+ */
+function getLeagueFirstPitchAvg() {
+  if (leagueFirstPitchMemo && leagueFirstPitchMemo.metric != null) return leagueFirstPitchMemo.metric;
+  try {
+    const files = fs.readdirSync(CACHE_DIR).filter(f => f.startsWith('league_fp_') && f.endsWith('.json'));
+    let best = null;
+    for (const f of files) {
+      try {
+        const rec = JSON.parse(fs.readFileSync(path.join(CACHE_DIR, f), 'utf8'));
+        if (!rec || rec.metric == null) continue;
+        if (!best || spanDays(rec.start, rec.end) >= spanDays(best.start, best.end)) best = rec;
+      } catch (_) { /* skip corrupt */ }
+    }
+    if (best) { leagueFirstPitchMemo = best; return best.metric; }
+  } catch (_) { /* CACHE_DIR unreadable */ }
+  return null;
+}
+
 /**
  * GET /api/teams/range
  * Returns batter scouting data for a given date range.
@@ -1051,6 +1114,13 @@ const teamsRangeHandler = async (req, res) => {
       });
     }
 
+    // League first-pitch baseline: pool over ALL pitches in the range (before any
+    // pitch-group filter) so the file for a given range always reflects the league,
+    // not a filtered subset. Persist to memo + disk for the batter-card endpoint.
+    const leaguePool = poolLeagueFirstPitch(pitches);
+    recordLeagueFirstPitch(finalStartDate, finalEndDate, leaguePool);
+    const leagueFirstPitchAvg = leaguePool.metric;
+
     // filter by pitch group if specified
     if (pitchGroup && pitchGroup !== 'All') {
       const fastballs = ['Four-Seam', 'Sinker', 'Cutter'];
@@ -1069,8 +1139,8 @@ const teamsRangeHandler = async (req, res) => {
     const parsedMaxVelocity = maxVelocity ? parseFloat(maxVelocity) : 999;
 
     // transform data with velocity filter
-    const teamsData = transformPitchDataToTeams(pitches, {}, parsedMaxVelocity);
-    
+    const teamsData = transformPitchDataToTeams(pitches, {}, parsedMaxVelocity, leagueFirstPitchAvg);
+
     // check if any data survived the velocity filter
     const totalPlayers = Object.values(teamsData).reduce((sum, team) => sum + team.length, 0);
     
@@ -1490,7 +1560,10 @@ const batterCardHandler = async (req, res) => {
     pitches = filterByPitchGroup(pitches, pitchGroup);
 
     const parsedMaxVelocity = maxVelocity ? parseFloat(maxVelocity) : 999;
-    const teamsData = transformPitchDataToTeams(pitches, {}, parsedMaxVelocity);
+    // Attach the newest season-to-date league first-pitch average (memo/disk). If a
+    // cold container has none yet, this is null → Neutral + "league avg pending".
+    const leagueFirstPitchAvg = getLeagueFirstPitchAvg();
+    const teamsData = transformPitchDataToTeams(pitches, {}, parsedMaxVelocity, leagueFirstPitchAvg);
 
     const totalPlayers = Object.values(teamsData).reduce((sum, team) => sum + team.length, 0);
     if (totalPlayers === 0) {
