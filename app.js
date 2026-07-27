@@ -14,8 +14,7 @@ const DEFAULT_SETTINGS = {
   hotZoneHardHitThreshold: 40,
   // Pitch display settings
   maxPitchesDisplayed: 4,
-  showOnlyGoodPitches: false,
-  showOnlyBadPitches: false,
+  circleColorMode: 'both',     // 'both' | 'green' | 'red' — which rated circles to show
   pitcherHandFilter: 'All',   // 'All' | 'L' | 'R' — restrict circles to one pitcher hand
   hiddenPitchTypes: [],       // pitch abbreviations (e.g. 'SL') currently hidden from the grid
   bucketMinPitches: 3,        // (pitch type × zone) buckets under this size are dropped from the grid
@@ -674,8 +673,7 @@ printCurrentCard() {
   resetBatterScopedSettings() {
     CURRENT_SETTINGS.pitcherHandFilter = 'All';
     CURRENT_SETTINGS.hiddenPitchTypes = [];
-    CURRENT_SETTINGS.showOnlyGoodPitches = false;
-    CURRENT_SETTINGS.showOnlyBadPitches = false;
+    CURRENT_SETTINGS.circleColorMode = 'both';
   }
 
   /**
@@ -1685,8 +1683,29 @@ createElement('div', { style: { flex: 1 } },
                 )
               );
             })(),
-            createCheckbox('Green Zones Only', 'showOnlyGoodPitches', 'toggle-green'),
-            createCheckbox('Red Zones Only', 'showOnlyBadPitches', 'toggle-red')
+            // Circle color mode: show both colors (default), or isolate one.
+            createElement('div', { className: 'setting-item' },
+              createElement('label', { className: 'setting-label' }, 'Circle Colors'),
+              createElement('div', { style: { display: 'flex', gap: '6px' } },
+                ...[
+                  { value: 'both', label: 'Both' },
+                  { value: 'green', label: 'Green only' },
+                  { value: 'red', label: 'Red only' },
+                ].map(opt => {
+                  const isActive = (CURRENT_SETTINGS.circleColorMode || 'both') === opt.value;
+                  return createElement('button', {
+                    style: {
+                      padding: '6px 12px', borderRadius: '8px', fontWeight: '700', fontSize: '12px',
+                      cursor: 'pointer', transition: 'all 0.15s ease',
+                      border: `2px solid ${isActive ? '#3b82f6' : '#e2e8f0'}`,
+                      background: isActive ? '#3b82f6' : '#f8fafc',
+                      color: isActive ? 'white' : '#64748b'
+                    },
+                    onclick: () => this.updateSetting('circleColorMode', opt.value)
+                  }, opt.label);
+                })
+              )
+            )
           ),
 
           // Zone Analysis — full width

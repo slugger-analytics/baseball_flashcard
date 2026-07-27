@@ -29,8 +29,7 @@ const DEFAULT_LOGIC_SETTINGS = {
   bucketMinPitches: 3,
   hiddenPitchTypes: [],
   pitcherHandFilter: 'All',
-  showOnlyGoodPitches: false,
-  showOnlyBadPitches: false,
+  circleColorMode: 'both', // 'both' | 'green' | 'red'
 };
 
 /**
@@ -43,6 +42,29 @@ function resolveSettings(settings) {
 }
 
 function bucketKey(p) { return `${p.pitch}|${p.zone}`; }
+
+/**
+ * Orders pitches by bucket extremity (most extreme first). Stable: equal-extremity
+ * pitches (same bucket) keep their incoming order, which is chronological.
+ */
+function byExtremityDesc(arr) {
+  return arr
+    .map((z, i) => [z, i])
+    .sort((a, b) => ((b[0].extremity ?? -1) - (a[0].extremity ?? -1)) || (a[1] - b[1]))
+    .map(pair => pair[0]);
+}
+
+/**
+ * Resolves the circle color mode ('both' | 'green' | 'red'), gracefully migrating
+ * the legacy showOnlyGoodPitches / showOnlyBadPitches booleans if they are the
+ * only thing present in a persisted settings object.
+ */
+function circleColorMode(cfg) {
+  if (cfg.circleColorMode) return cfg.circleColorMode;
+  if (cfg.showOnlyGoodPitches && !cfg.showOnlyBadPitches) return 'green';
+  if (cfg.showOnlyBadPitches && !cfg.showOnlyGoodPitches) return 'red';
+  return 'both';
+}
 
 /**
  * Buckets a pitch population by (pitch type × zone) and rates each bucket against
@@ -105,14 +127,23 @@ function getVisiblePitches(batterData, settings) {
   if (cfg.hiddenPitchTypes && cfg.hiddenPitchTypes.length > 0) {
     fz = fz.filter(z => !cfg.hiddenPitchTypes.includes(z.pitch));
   }
-  if (cfg.showOnlyGoodPitches && !cfg.showOnlyBadPitches) {
-    fz = fz.filter(z => z.rating === 'green');
-  } else if (cfg.showOnlyBadPitches && !cfg.showOnlyGoodPitches) {
-    fz = fz.filter(z => z.rating === 'red');
+
+  const mode = circleColorMode(cfg);
+  const reds = byExtremityDesc(fz.filter(z => z.rating === 'red'));
+  const greens = byExtremityDesc(fz.filter(z => z.rating === 'green'));
+  const grays = byExtremityDesc(fz.filter(z => z.rating !== 'red' && z.rating !== 'green'));
+
+  let ordered;
+  if (mode === 'green') {
+    ordered = greens;
+  } else if (mode === 'red') {
+    ordered = reds;
+  } else {
+    // 'both': red + green first (F4 alternates them), grays after.
+    ordered = byExtremityDesc([...reds, ...greens]).concat(grays);
   }
-  // Stable sort: ties (pitches in the same bucket) keep chronological order
-  fz.sort((a, b) => (b.extremity ?? -1) - (a.extremity ?? -1));
-  return { pitches: fz, bucketCtx, populationCount: population.length };
+
+  return { pitches: ordered, bucketCtx, populationCount: population.length };
 }
 
 if (typeof module !== 'undefined' && module.exports) {
