@@ -19,6 +19,7 @@ const DEFAULT_SETTINGS = {
   hiddenPitchTypes: [],       // pitch abbreviations (e.g. 'SL') currently hidden from the grid
   bucketMinPitches: 3,        // (pitch type × zone) buckets under this size are dropped from the grid
   maxCirclesPerBucket: 1,     // circles kept per (pitch type × zone) bucket; 'All' = uncapped
+  swingsOnly: false,          // restrict the population to swings (drop takes + other)
   pitchCircleSize: 38
 };
 let CURRENT_SETTINGS = { ...DEFAULT_SETTINGS };
@@ -676,6 +677,7 @@ printCurrentCard() {
     CURRENT_SETTINGS.hiddenPitchTypes = [];
     CURRENT_SETTINGS.circleColorMode = 'both';
     CURRENT_SETTINGS.maxCirclesPerBucket = 1;
+    CURRENT_SETTINGS.swingsOnly = false;
   }
 
   /**
@@ -1735,7 +1737,9 @@ createElement('div', { style: { flex: 1 } },
                   }, opt.label);
                 })
               )
-            )
+            ),
+            // Swings-only: recompute population, colors, and thresholds over swings only.
+            createCheckbox('Swings Only', 'swingsOnly')
           ),
 
           // Zone Analysis — full width

@@ -31,7 +31,11 @@ const DEFAULT_LOGIC_SETTINGS = {
   pitcherHandFilter: 'All',
   circleColorMode: 'both', // 'both' | 'green' | 'red'
   maxCirclesPerBucket: 1,  // number (1..10) or 'All'
+  swingsOnly: false,       // restrict the population to swings (drop takes + other)
 };
+
+// Per-pitch outcomes counted as a swing (a take is 'take'; 'other' is neither).
+const SWING_OUTCOMES = ['whiff', 'foul', 'hit', 'out'];
 
 /**
  * Resolves the effective settings object: explicit arg > app.js global > defaults.
@@ -141,8 +145,13 @@ function computeBucketRatings(pitches, settings) {
 function getVisiblePitches(batterData, settings) {
   const cfg = resolveSettings(settings);
   const hand = cfg.pitcherHandFilter;
-  const population = (batterData.pitchZones || []).filter(z =>
+  let population = (batterData.pitchZones || []).filter(z =>
     (hand === 'L' || hand === 'R') ? z.pitcherThrows === hand : true);
+  // Swings-only mode: filter BEFORE bucketing so population, overallRate, bucket
+  // colors, and elimination thresholds all recompute on the swing population.
+  if (cfg.swingsOnly) {
+    population = population.filter(z => SWING_OUTCOMES.includes(z.outcome));
+  }
   const bucketCtx = computeBucketRatings(population, cfg);
 
   let fz = population.map(z => {
