@@ -24,6 +24,8 @@ COPY --from=builder /app/node_modules ./node_modules
 COPY package*.json ./
 COPY server.js ./
 COPY app.js ./
+COPY pitch_logic.js ./
+COPY lib/ ./lib/
 COPY index.html ./
 COPY styles.css ./
 COPY *.svg ./

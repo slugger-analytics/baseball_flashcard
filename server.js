@@ -6,6 +6,7 @@ const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
 const { withParserAsStream } = require('stream-json/streamers/stream-array.js');
+const { SWUNG_CALLS } = require('./lib/stats.js');
 
 // Vercel's and Lambda's filesystems are read-only except /tmp; use /tmp there, local cache/ elsewhere.
 const CACHE_DIR = (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME)
@@ -598,7 +599,7 @@ function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 9
     batterData.stats.totalPitches++;
     if (currentPA.isFirstPitch) {
       batterData.stats.firstPitchPitches++;
-      if (['StrikeSwinging', 'FoulBall', 'FoulBallFieldable', 'FoulBallNotFieldable', 'InPlay'].includes(pitch.pitch_call)) {
+      if (SWUNG_CALLS.includes(pitch.pitch_call)) {
         batterData.stats.firstPitchSwings++;
       }
       currentPA.isFirstPitch = false;

@@ -124,16 +124,9 @@ function createElement(tag, props = {}, ...children) {
   });
   return el;
 }
-/**
- * Bucket color model: pitches are grouped into (pitch type × zone) buckets —
- * e.g. "sliders in Low-In". Each bucket's hit rate (contact hits per pitch)
- * is compared against the batter's overall hits-per-pitch rate over the same
- * (hand-filtered) pitch population. 25%+ below overall = green (good for the
- * pitcher — attack here), 25%+ above = red (avoid), inside the band = gray.
- * Buckets with fewer than the user-set Min Pitches per Bucket are eliminated
- * from the grid entirely — too small a sample to trust either way.
- */
-const BUCKET_RATING_EDGE = 0.25;
+// BUCKET_RATING_EDGE, bucketKey, computeBucketRatings and getVisiblePitches now
+// live in pitch_logic.js (loaded before app.js) so they can be unit-tested under
+// node:test. app.js calls them as globals.
 
 /**
  * Decodes the server's columnar pitchZones ("pz" columns + metadata.pzLegend)
@@ -173,77 +166,6 @@ function decodePitchZones(teamsData, legend) {
   return teamsData;
 }
 
-function bucketKey(p) { return `${p.pitch}|${p.zone}`; }
-
-/**
- * Buckets a pitch population by (pitch type × zone) and rates each bucket
- * against the batter's overall hit rate over that population.
- * @param {Array<Object>} pitches - pitchZone objects ({ pitch, zone, outcome, ... }).
- * @returns {{ buckets: Object, overallRate: number|null }} Bucket map keyed by
- *   bucketKey → { total, hit, out, whiff, take, foul, other, rate, rating,
- *   extremity, eliminated }, plus the population's overall hits-per-pitch.
- */
-function computeBucketRatings(pitches) {
-  const buckets = {};
-  let totalHits = 0;
-  pitches.forEach(p => {
-    const k = bucketKey(p);
-    if (!buckets[k]) buckets[k] = { pitch: p.pitch, zone: p.zone, total: 0, hit: 0, out: 0, whiff: 0, take: 0, foul: 0, other: 0 };
-    const b = buckets[k];
-    b.total++;
-    if (b[p.outcome] !== undefined && p.outcome !== 'total') b[p.outcome]++;
-    else b.other++;
-    if (p.outcome === 'hit') totalHits++;
-  });
-  const overallRate = pitches.length > 0 ? totalHits / pitches.length : null;
-
-  Object.values(buckets).forEach(b => {
-    b.rate = b.total > 0 ? b.hit / b.total : null;
-    b.eliminated = b.total < CURRENT_SETTINGS.bucketMinPitches;
-    b.rating = 'neutral';
-    b.extremity = -1;
-    if (!b.eliminated && overallRate > 0 && b.rate !== null) {
-      if (b.rate <= overallRate * (1 - BUCKET_RATING_EDGE)) b.rating = 'green';
-      else if (b.rate >= overallRate * (1 + BUCKET_RATING_EDGE)) b.rating = 'red';
-      // Distance from the batter's average, used to reveal extremes first
-      b.extremity = Math.abs(b.rate / overallRate - 1);
-    }
-  });
-  return { buckets, overallRate };
-}
-
-/**
- * Builds the drawable pitch list for a batter: applies the pitcher-hand
- * filter, buckets and rates the population, drops eliminated (under-sample)
- * buckets and hidden pitch types, applies the green/red-only toggles, and
- * orders pitches so the most extreme buckets come first — the Max Pitches
- * slider reveals extremes before average buckets.
- * @param {Object} batterData - A batter object from TEAMS_DATA.
- * @returns {{ pitches: Array<Object>, bucketCtx: Object, populationCount: number }}
- */
-function getVisiblePitches(batterData) {
-  const hand = CURRENT_SETTINGS.pitcherHandFilter;
-  const population = (batterData.pitchZones || []).filter(z =>
-    (hand === 'L' || hand === 'R') ? z.pitcherThrows === hand : true);
-  const bucketCtx = computeBucketRatings(population);
-
-  let fz = population.map(z => {
-    const b = bucketCtx.buckets[bucketKey(z)];
-    return { ...z, rating: b.rating, extremity: b.extremity, eliminated: b.eliminated };
-  });
-  fz = fz.filter(z => !z.eliminated);
-  if (CURRENT_SETTINGS.hiddenPitchTypes.length > 0) {
-    fz = fz.filter(z => !CURRENT_SETTINGS.hiddenPitchTypes.includes(z.pitch));
-  }
-  if (CURRENT_SETTINGS.showOnlyGoodPitches && !CURRENT_SETTINGS.showOnlyBadPitches) {
-    fz = fz.filter(z => z.rating === 'green');
-  } else if (CURRENT_SETTINGS.showOnlyBadPitches && !CURRENT_SETTINGS.showOnlyGoodPitches) {
-    fz = fz.filter(z => z.rating === 'red');
-  }
-  // Stable sort: ties (pitches in the same bucket) keep chronological order
-  fz.sort((a, b) => (b.extremity ?? -1) - (a.extremity ?? -1));
-  return { pitches: fz, bucketCtx, populationCount: population.length };
-}
 function createPitchZone(preFilteredZones, handedness, bucketCtx) {
   const filteredZones = Array.isArray(preFilteredZones) ? preFilteredZones : [];
   const displayZones = filteredZones.slice(0, CURRENT_SETTINGS.maxPitchesDisplayed);
