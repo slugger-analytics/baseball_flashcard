@@ -55,6 +55,21 @@ function byExtremityDesc(arr) {
 }
 
 /**
+ * Interleaves two ordered arrays one-at-a-time starting with the first (reds).
+ * When one runs out, the remainder of the other is appended in order.
+ * e.g. interleave([R1,R2], [G1,G2]) → [R1,G1,R2,G2]; interleave([R1,R2,R3],[G1]) → [R1,G1,R2,R3].
+ */
+function interleave(reds, greens) {
+  const out = [];
+  const n = Math.max(reds.length, greens.length);
+  for (let i = 0; i < n; i++) {
+    if (i < reds.length) out.push(reds[i]);
+    if (i < greens.length) out.push(greens[i]);
+  }
+  return out;
+}
+
+/**
  * Resolves the circle color mode ('both' | 'green' | 'red'), gracefully migrating
  * the legacy showOnlyGoodPitches / showOnlyBadPitches booleans if they are the
  * only thing present in a persisted settings object.
@@ -139,8 +154,8 @@ function getVisiblePitches(batterData, settings) {
   } else if (mode === 'red') {
     ordered = reds;
   } else {
-    // 'both': red + green first (F4 alternates them), grays after.
-    ordered = byExtremityDesc([...reds, ...greens]).concat(grays);
+    // 'both': alternate one red, one green (starting red); grays after all colors.
+    ordered = interleave(reds, greens).concat(grays);
   }
 
   return { pitches: ordered, bucketCtx, populationCount: population.length };
@@ -152,6 +167,7 @@ if (typeof module !== 'undefined' && module.exports) {
     DEFAULT_LOGIC_SETTINGS,
     resolveSettings,
     bucketKey,
+    interleave,
     computeBucketRatings,
     getVisiblePitches,
   };
