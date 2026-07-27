@@ -1662,6 +1662,32 @@ createElement('div', { style: { flex: 1 } },
                 )
               );
             })(),
+            // Max pitch velocity: reloads the batter's card server-side. onchange
+            // ONLY (never oninput) — each change is a fresh scoped fetch. 105 = no cap.
+            (() => {
+              const cur = this.lastMaxVelocity != null ? this.lastMaxVelocity : 105;
+              const fmt = (v) => (v >= 105 ? 'No cap' : v + ' mph');
+              return createElement('div', { className: 'setting-item' },
+                createElement('label', { className: 'setting-label' }, 'Max Pitch Velocity'),
+                createElement('div', { className: 'setting-input-group' },
+                  createElement('input', {
+                    type: 'range', min: '0', max: '105', step: '1', value: String(cur), className: 'setting-slider',
+                    oninput: (e) => {
+                      const v = parseInt(e.target.value, 10);
+                      e.target.parentElement.querySelector('.max-velo-value').textContent = fmt(v);
+                    },
+                    onchange: (e) => {
+                      const v = parseInt(e.target.value, 10);
+                      this.loadBatterCard(this.lastStartDate, this.lastEndDate, v, this.lastPitchGroup || 'All');
+                    }
+                  }),
+                  createElement('span', {
+                    className: 'max-velo-value setting-number-input',
+                    style: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }
+                  }, fmt(cur))
+                )
+              );
+            })(),
             // Pitcher-hand FILTER: restricts circles + zone stats to one hand
             createElement('div', { className: 'setting-item' },
               createElement('label', { className: 'setting-label' }, 'Pitcher Hand'),
@@ -1805,7 +1831,7 @@ createElement('div', { style: { flex: 1 } },
         //test for fork
         createElement('div', { className: 'header__controls' },
           createElement('span', { className: 'chip back-chip', onclick: () => this.showBatterSelect() }, '← Batters'),
-          createElement('span', { className: 'chip', onclick: () => this.showWindowSelect() }, '⚙ Window'),
+          createElement('span', { className: 'chip', onclick: () => this.showWindowSelect() }, '⚙ Filters & Dates'),
           createElement('span', { className: 'chip print-chip', onclick: () => this.printCurrentCard() }, 'Print'),
           createElement('span', {
             className: 'chip', onclick: () => this.gotoAdjacentBatter(-1)
