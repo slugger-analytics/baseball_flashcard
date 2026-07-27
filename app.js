@@ -499,12 +499,10 @@ class FlashcardApp {
     this.showInfoPanel = false;
     this.showSettingsPanel = false;
     // Settings live in an always-visible docked sidebar by default (never printed).
-    // Below the 768px breakpoint the docked sidebar becomes a full-screen fixed
-    // overlay (see styles.css @media max-width:768px), so it must start closed
-    // there — otherwise a first-time phone/tablet user sees only the settings
-    // panel with the flashcard hidden behind it. On narrow viewports the user
-    // opens it on demand via the "⚙ Show Settings" button.
-    this.isSettingsDocked = !(window.matchMedia && window.matchMedia('(max-width: 768px)').matches);
+    // On mobile the docked sidebar stacks BELOW the card (see styles.css
+    // @media max-width:768px), so it can start docked everywhere without covering
+    // the flashcard. Users hide it on demand via the "⚙ Hide Settings" button.
+    this.isSettingsDocked = true;
     this.sortBy = 'number';
     this.sortOrder = 'asc';
     const defaults = getDefaultSeasonDates();

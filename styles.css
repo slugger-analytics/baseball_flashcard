@@ -2358,28 +2358,6 @@ button:active {
     word-break: break-word;
   }
 
-  /* Settings sidebar → centered modal overlay on mobile */
-  .app-sidebar-docked::before {
-    content: '';
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.5);
-    z-index: 999;
-  }
-  .app-sidebar-docked .settings-sidebar {
-    position: fixed !important;
-    top: 50% !important;
-    left: 50% !important;
-    transform: translate(-50%, -50%) !important;
-    width: 92vw !important;
-    max-height: 82vh !important;
-    overflow-y: auto !important;
-    z-index: 1000 !important;
-    border-radius: 16px !important;
-    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4) !important;
-    height: auto !important;
-  }
-
   /* Header title + controls centering */
   .header__title {
     justify-content: center !important;
