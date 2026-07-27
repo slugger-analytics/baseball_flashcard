@@ -30,6 +30,7 @@ const DEFAULT_LOGIC_SETTINGS = {
   hiddenPitchTypes: [],
   pitcherHandFilter: 'All',
   circleColorMode: 'both', // 'both' | 'green' | 'red'
+  maxCirclesPerBucket: 1,  // number (1..10) or 'All'
 };
 
 /**
@@ -59,6 +60,16 @@ function byExtremityDesc(arr) {
  * When one runs out, the remainder of the other is appended in order.
  * e.g. interleave([R1,R2], [G1,G2]) → [R1,G1,R2,G2]; interleave([R1,R2,R3],[G1]) → [R1,G1,R2,R3].
  */
+/**
+ * Interprets the maxCirclesPerBucket setting as a numeric cap. 'All' (or missing)
+ * means no cap (Infinity); a positive number caps circles kept per bucket.
+ */
+function normalizeCircleCap(v) {
+  if (v === undefined || v === null || v === 'All' || v === 'all') return Infinity;
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 1 ? n : Infinity;
+}
+
 function interleave(reds, greens) {
   const out = [];
   const n = Math.max(reds.length, greens.length);
@@ -156,6 +167,19 @@ function getVisiblePitches(batterData, settings) {
   } else {
     // 'both': alternate one red, one green (starting red); grays after all colors.
     ordered = interleave(reds, greens).concat(grays);
+  }
+
+  // Cap circles per bucket AFTER ordering: keeping the first N in the ordered list
+  // preserves the chronologically-first pitch(es) within each bucket (and the
+  // alternation shape), since same-bucket pitches retain chronological order.
+  const cap = normalizeCircleCap(cfg.maxCirclesPerBucket);
+  if (cap !== Infinity) {
+    const perBucket = {};
+    ordered = ordered.filter(z => {
+      const k = bucketKey(z);
+      perBucket[k] = (perBucket[k] || 0) + 1;
+      return perBucket[k] <= cap;
+    });
   }
 
   return { pitches: ordered, bucketCtx, populationCount: population.length };

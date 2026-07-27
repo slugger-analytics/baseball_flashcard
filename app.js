@@ -18,6 +18,7 @@ const DEFAULT_SETTINGS = {
   pitcherHandFilter: 'All',   // 'All' | 'L' | 'R' — restrict circles to one pitcher hand
   hiddenPitchTypes: [],       // pitch abbreviations (e.g. 'SL') currently hidden from the grid
   bucketMinPitches: 3,        // (pitch type × zone) buckets under this size are dropped from the grid
+  maxCirclesPerBucket: 1,     // circles kept per (pitch type × zone) bucket; 'All' = uncapped
   pitchCircleSize: 38
 };
 let CURRENT_SETTINGS = { ...DEFAULT_SETTINGS };
@@ -674,6 +675,7 @@ printCurrentCard() {
     CURRENT_SETTINGS.pitcherHandFilter = 'All';
     CURRENT_SETTINGS.hiddenPitchTypes = [];
     CURRENT_SETTINGS.circleColorMode = 'both';
+    CURRENT_SETTINGS.maxCirclesPerBucket = 1;
   }
 
   /**
@@ -1630,6 +1632,34 @@ createElement('div', { style: { flex: 1 } },
             createSlider('Pitch Circle Size (px)', 'pitchCircleSize', 28, 56, 1),
             // Buckets = pitch type × zone; buckets under this size are dropped
             createSlider('Min Pitches per Bucket', 'bucketMinPitches', 1, 20, 1),
+            // Max circles drawn per bucket: 1..10, plus an "All" position (slider max = 11).
+            (() => {
+              const raw = CURRENT_SETTINGS.maxCirclesPerBucket;
+              const isAll = raw === 'All' || raw === 'all';
+              const sliderVal = isAll ? 11 : raw;
+              return createElement('div', { className: 'setting-item' },
+                createElement('label', { className: 'setting-label' }, 'Max Circles per Bucket'),
+                createElement('div', { className: 'setting-input-group' },
+                  createElement('input', {
+                    type: 'range', min: '1', max: '11', step: '1', value: String(sliderVal), className: 'setting-slider',
+                    oninput: (e) => {
+                      const v = parseInt(e.target.value, 10);
+                      CURRENT_SETTINGS.maxCirclesPerBucket = v >= 11 ? 'All' : v;
+                      e.target.parentElement.querySelector('.max-circles-value').textContent = v >= 11 ? 'All' : String(v);
+                      this.updatePitchZone();
+                    },
+                    onchange: (e) => {
+                      const v = parseInt(e.target.value, 10);
+                      this.updateSetting('maxCirclesPerBucket', v >= 11 ? 'All' : v);
+                    }
+                  }),
+                  createElement('span', {
+                    className: 'max-circles-value setting-number-input',
+                    style: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }
+                  }, isAll ? 'All' : String(sliderVal))
+                )
+              );
+            })(),
             // Pitcher-hand FILTER: restricts circles + zone stats to one hand
             createElement('div', { className: 'setting-item' },
               createElement('label', { className: 'setting-label' }, 'Pitcher Hand'),
