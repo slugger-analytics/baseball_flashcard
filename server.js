@@ -8,6 +8,7 @@ const path = require('path');
 const { withParserAsStream } = require('stream-json/streamers/stream-array.js');
 const {
   isZeroZeroPitch, classifyZeroZeroCall, firstPitchMetric, firstPitchLabel, poolLeagueFirstPitch,
+  getZoneFromLocation, getPitchGroup, computeZoneGroupAnnotations, PITCH_GROUP_TAXONOMY,
 } = require('./lib/stats.js');
 const { buildCanonicalNameMap, dedupeBatters } = require('./lib/players.js');
 
@@ -723,6 +724,27 @@ function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 9
         else if (['Single', 'Double', 'Triple', 'HomeRun'].includes(pitch.play_result)) zoneStats.contactHits++;
       }
 
+      // Per-(zone × pitch-group) cell counters, accumulated with the EXACT same
+      // pitch_call / exit_speed (95/70) conditions as the zone counters above. Used
+      // only to derive vg/hg annotations post-pass; zoneStats.groups is deleted
+      // before shipping (see computeZoneGroupAnnotations).
+      const zoneGroup = getPitchGroup(pitch.auto_pitch_type || pitch.tagged_pitch_type);
+      if (zoneGroup) {
+        if (!zoneStats.groups) zoneStats.groups = {};
+        if (!zoneStats.groups[zoneGroup]) {
+          zoneStats.groups[zoneGroup] = { pitches: 0, swings: 0, whiffs: 0, weakContact: 0, hardHits: 0, contact: 0 };
+        }
+        const g = zoneStats.groups[zoneGroup];
+        g.pitches++;
+        if (['StrikeSwinging', 'FoulBall', 'FoulBallFieldable', 'FoulBallNotFieldable', 'InPlay'].includes(pitch.pitch_call)) g.swings++;
+        if (pitch.pitch_call === 'StrikeSwinging') g.whiffs++;
+        if (['FoulBall', 'FoulBallFieldable', 'FoulBallNotFieldable', 'InPlay'].includes(pitch.pitch_call)) g.contact++;
+        if (pitch.exit_speed && pitch.pitch_call === 'InPlay') {
+          if (pitch.exit_speed >= 95) g.hardHits++;
+          else if (pitch.exit_speed < 70) g.weakContact++;
+        }
+      }
+
       // Pitcher's perspective: the batter silhouette flanks the zone as the
       // pitcher sees it (LHB left of the zone, RHB right). Positive
       // plate_loc_side = catcher's left = the pitcher's RIGHT (see
@@ -877,6 +899,10 @@ function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 9
           : { text: 'Insufficient data', breakdown: null };
         batter.powerSequence = outResult.text;
         batter.powerSequenceBreakdown = outResult.breakdown;
+
+        // Annotate vulnerable/hot zones with the driving pitch group (sample-gated),
+        // then drop the internal per-group accumulator so it never ships.
+        computeZoneGroupAnnotations(batter.zoneAnalysis);
       }
     });
   });
@@ -905,31 +931,8 @@ function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 9
   return slimData;
 }
 
-/**
- * Maps a pitch's plate coordinates to a named strike zone (e.g. 'High-In', 'Mid-Out').
- *
- * Sign convention (verified empirically on the full 2026 feed, ~107k pitches):
- * positive plate_loc_side = the CATCHER'S LEFT = third-base side = where a
- * right-handed batter stands. Two independent checks agree: (1) pitchers work
- * away — pitches to RHB lean negative, to LHB positive; (2) pitch physics —
- * RHP sliders (glove-side break, catcher's right) average -0.36 while RHP
- * sinkers/changeups (arm-side run, catcher's left) average +0.22/+0.27, with
- * LHP exactly mirrored. Earlier code assumed the opposite sign, which mirrored
- * every In/Out label (and the dot positions that were later flipped to match).
- *
- * @param {number} plateSide - Horizontal plate position in feet (positive = catcher's left).
- * @param {number} plateHeight - Vertical plate position in feet above the ground.
- * @param {string} handedness - Batter handedness: 'LHB' or 'RHB'.
- * @returns {string} Zone label in the format '<Vertical>-<Horizontal>'.
- */
-function getZoneFromLocation(plateSide, plateHeight, handedness) {
-  const isInside = (handedness === 'RHB' && plateSide > 0.33) || (handedness === 'LHB' && plateSide < -0.33);
-  const isOutside = (handedness === 'RHB' && plateSide < -0.33) || (handedness === 'LHB' && plateSide > 0.33);
-  const horizontal = isInside ? 'In' : (isOutside ? 'Out' : 'Mid');
-  const isHigh = plateHeight > 3.0, isLow = plateHeight < 2.0;
-  const vertical = isHigh ? 'High' : (isLow ? 'Low' : 'Mid');
-  return `${vertical}-${horizontal}`;
-}
+// getZoneFromLocation now lives in lib/stats.js (imported above) so the same
+// coordinate→sector mapping backs both the transform and the zone-group analysis.
 
 /**
  * Converts a full Trackman pitch type name to its display abbreviation.
@@ -1472,16 +1475,9 @@ function resolveDateRange(startDate, endDate) {
  */
 function filterByPitchGroup(pitches, pitchGroup) {
   if (!pitchGroup || pitchGroup === 'All') return pitches;
-  const fastballs = ['Four-Seam', 'Sinker', 'Cutter'];
-  const breaking  = ['Slider', 'Curveball'];
-  const offspeed  = ['Changeup', 'ChangeUp', 'Splitter'];
-  return pitches.filter(p => {
-    const pt = p.auto_pitch_type || p.tagged_pitch_type;
-    if (pitchGroup === 'Fastballs') return fastballs.includes(pt);
-    if (pitchGroup === 'Breaking')  return breaking.includes(pt);
-    if (pitchGroup === 'Offspeed')  return offspeed.includes(pt);
-    return true;
-  });
+  const members = PITCH_GROUP_TAXONOMY[pitchGroup];
+  if (!members) return pitches; // unknown group name → no filter (unchanged behavior)
+  return pitches.filter(p => members.includes(p.auto_pitch_type || p.tagged_pitch_type));
 }
 
 /**

@@ -321,6 +321,10 @@ function makeReadMore(sectionKey, expandedContent, appRef) {
   );
 }
 
+// Display labels for the coarse pitch groups the server tags onto vulnerable/hot
+// zones (zoneAnalysis[zone].vg / .hg). Mirrors the loadBatterCard pitch-group map.
+const PITCH_GROUP_DISPLAY = { Fastballs: 'Fastballs', Breaking: 'Breaking Balls', Offspeed: 'Offspeed' };
+
 function createTendencies(tendencies, stats, zoneAnalysis, powerSequence, powerSequenceBreakdown) {
 const stripPercents = (text) => {
     if (typeof text !== 'string') return text;
@@ -444,7 +448,13 @@ const stripPercents = (text) => {
         createElement('button', { className: 'section-info-btn', onclick: (e) => { e.stopPropagation(); openInfoModal('vulnerable'); } }, 'ℹ')
       ),
       createElement('div', { className: 'power-sequence-text' },
-        cappedVulnerableZones.slice(0, 2).map(z => `${z.zone} (${z.score})`).join(', ')),
+        cappedVulnerableZones.slice(0, 2).map(z => {
+          const ann = zoneAnalysis && zoneAnalysis[z.zone];
+          const label = (ann && ann.vg)
+            ? `${z.zone} — vulnerable vs ${PITCH_GROUP_DISPLAY[ann.vg] || ann.vg} (n=${ann.vgN})`
+            : `${z.zone} (${z.score})`;
+          return createElement('div', { className: 'zone-annotation-entry' }, label);
+        })),
     ) : null,
     hotZones.length > 0 ? createElement('div', { className: 'power-sequence hot-zone' },
       createElement('h4', { style: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' } },
@@ -452,7 +462,13 @@ const stripPercents = (text) => {
         createElement('button', { className: 'section-info-btn', onclick: (e) => { e.stopPropagation(); openInfoModal('hot'); } }, 'ℹ')
       ),
       createElement('div', { className: 'power-sequence-text' },
-        hotZones.slice(0, 2).map(z => z.zone).join(', ') || 'None identified'),
+        hotZones.slice(0, 2).map(z => {
+          const ann = zoneAnalysis && zoneAnalysis[z.zone];
+          const label = (ann && ann.hg)
+            ? `${z.zone} — feeds ${PITCH_GROUP_DISPLAY[ann.hg] || ann.hg} (n=${ann.hgN})`
+            : z.zone;
+          return createElement('div', { className: 'zone-annotation-entry' }, label);
+        })),
     ) : null,
     createElement('div', { className: 'power-sequence out-sequence' },
       createElement('h4', { style: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' } },
@@ -1902,6 +1918,7 @@ createElement('div', { style: { flex: 1 } },
                 ...makeInfoExpand(
                   createElement('p', {}, 'Each zone gets a vulnerability score from 0 (most vulnerable) to 60 (least) based on whiff rate, weak contact rate, and foul rate.'),
                   createElement('p', {}, 'The ', createElement('strong', {}, 'Vulnerable Zone Min Swings'), ' setting (Analysis Settings → Zone Analysis) controls the minimum sample a zone needs before it can appear here.'),
+                  createElement('p', {}, 'When one pitch group drives the vulnerability, the zone shows a note like ', createElement('strong', {}, '"vulnerable vs Breaking Balls (n=14)"'), ' — added only when that group has at least 8 pitches and 4 swings in the zone and whiffs/weak contact there run 25%+ above the zone as a whole.'),
                   createElement('p', {}, 'When attacking here, stay in the zone — even borderline pitches will produce poor contact.')
                 )
               )
@@ -1917,6 +1934,7 @@ createElement('div', { style: { flex: 1 } },
                 ),
                 ...makeInfoExpand(
                   createElement('p', {}, 'A zone qualifies as a Hot Zone when: hard-hit rate exceeds ', createElement('strong', {}, '40%'), ' AND at least ', createElement('strong', {}, '2 hard hits'), ' (95+ mph) have been recorded there.'),
+                  createElement('p', {}, 'When one pitch group drives the damage, the zone shows a note like ', createElement('strong', {}, '"feeds Fastballs (n=17)"'), ' — added only when that group has at least 8 pitches and 3 balls in play in the zone and its hard-hit rate runs 25%+ above the zone as a whole.'),
                   createElement('p', {}, 'These thresholds are adjustable in Analysis Settings → Zone Analysis. Use Hot Zones as a map of where ', createElement('em', {}, 'not'), ' to miss — especially when ahead in the count.')
                 )
               )
