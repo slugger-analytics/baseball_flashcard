@@ -650,9 +650,166 @@ printCurrentCard() {
     const savedScroll = window.scrollY;
     setTimeout(() => {
       window.print();
-      setTimeout(() => window.scrollTo(0, savedScroll), 500); 
+      setTimeout(() => window.scrollTo(0, savedScroll), 500);
     }, 150);
   }
+
+  /**
+   * Builds a print packet for every hitter on a team, straight from the batter
+   * picker. Fetches each roster batter's card sequentially (same scoped query as
+   * selectBatter), renders every profile into the lineup print container, and shows
+   * a progress overlay with a Print/Close summary. Never disturbs the interactive
+   * card state (TEAMS_DATA / METADATA / selectedTeam are left untouched).
+   * @param {string} teamName - The team whose hitters to print.
+   */
+  async printTeamPacket(teamName) {
+    if (this.bulkPrint && this.bulkPrint.active) return; // re-entry guard
+    const roster = rosterForTeam(BATTERS_INDEX, teamName);
+    if (!roster.length) return;
+
+    this.bulkPrint = { active: true, done: 0, total: roster.length, failures: [], aborted: false, teamName, phase: 'building', currentName: null, pages: 0 };
+    this.renderBulkPrintOverlay();
+
+    // Neutralize the batter-scoped display toggles so every card renders the same
+    // way; restore the live settings in the finally around the WHOLE loop.
+    const saved = CURRENT_SETTINGS;
+    CURRENT_SETTINGS = bulkPrintSettings(saved);
+
+    const singleContainer = this.getPrintContainer('print-container');
+    const lineupContainer = this.getPrintContainer('lineup-print-container');
+    singleContainer.innerHTML = '';
+    lineupContainer.innerHTML = '';
+
+    const season = getFullSeasonRange();
+    let pageIndex = 0;
+    try {
+      for (const batter of roster) {
+        if (this.bulkPrint.aborted) break;
+        this.bulkPrint.currentName = batter.name;
+        this.renderBulkPrintOverlay();
+        try {
+          // Identical scope to selectBatter so the per-batter disk cache keys match.
+          const ids = encodeURIComponent((batter.ids || []).join(','));
+          const response = await fetch(
+            `./api/batter/card?batterIds=${ids}&startDate=${season.start}&endDate=${season.end}&maxVelocity=105&pitchGroup=All`
+          );
+          const data = await response.json();
+          if (!response.ok) {
+            this.bulkPrint.failures.push({ name: batter.name, reason: data.error || `HTTP ${response.status}` });
+          } else if (!data.teamsData || Object.keys(data.teamsData).length === 0) {
+            this.bulkPrint.failures.push({ name: batter.name, reason: 'no_data' });
+          } else {
+            decodePitchZones(data.teamsData, data.metadata && data.metadata.pzLegend);
+            orderProfilesForPrint(data.teamsData).forEach(profile => {
+              lineupContainer.appendChild(this.buildPrintPage(profile, teamName, pageIndex++));
+            });
+          }
+        } catch (err) {
+          this.bulkPrint.failures.push({ name: batter.name, reason: (err && err.message) || 'error' });
+        }
+        this.bulkPrint.done++;
+        this.renderBulkPrintOverlay();
+      }
+    } finally {
+      CURRENT_SETTINGS = saved;
+    }
+
+    if (this.bulkPrint.aborted) {
+      singleContainer.innerHTML = '';
+      lineupContainer.innerHTML = '';
+      this.dismissBulkPrint();
+      return;
+    }
+
+    // Scale circles down for print, mirroring printLineup.
+    const printSize = Math.round(CURRENT_SETTINGS.pitchCircleSize * 0.75);
+    lineupContainer.querySelectorAll('.pitch-zone').forEach(el => {
+      el.style.setProperty('--pitch-circle-size', `${printSize}px`);
+    });
+
+    this.bulkPrint.phase = 'done';
+    this.bulkPrint.pages = pageIndex;
+    this.renderBulkPrintOverlay();
+  }
+
+  /**
+   * (Re)draws the fixed bulk-print overlay from this.bulkPrint. Lives on document.body
+   * (a sibling of #app) so it survives picker re-renders; a no-print CSS rule keeps it
+   * out of the printout.
+   */
+  renderBulkPrintOverlay() {
+    const existing = document.getElementById('bulk-print-overlay');
+    if (existing) existing.remove();
+    const bp = this.bulkPrint;
+    if (!bp || !bp.active) return;
+
+    let card;
+    if (bp.phase === 'done') {
+      const pages = bp.pages || 0;
+      const skipped = bp.failures.length
+        ? `Skipped ${bp.failures.length}: ${bp.failures.map(f => f.name).join(', ')}`
+        : null;
+      if (pages === 0) {
+        card = createElement('div', { className: 'bulk-print-card' },
+          createElement('div', { className: 'bulk-print-title' }, 'No cards to print'),
+          createElement('div', { className: 'bulk-print-sub' }, skipped || 'No hitters on this team returned pitch data.'),
+          createElement('div', { className: 'bulk-print-actions' },
+            createElement('button', { className: 'team-btn', onclick: () => this.dismissBulkPrint() }, 'Close')
+          )
+        );
+      } else {
+        card = createElement('div', { className: 'bulk-print-card' },
+          createElement('div', { className: 'bulk-print-title' }, `${pages} page${pages === 1 ? '' : 's'} ready`),
+          skipped ? createElement('div', { className: 'bulk-print-sub' }, skipped) : null,
+          createElement('div', { className: 'bulk-print-actions' },
+            createElement('button', { className: 'team-btn', onclick: () => this.printBulkPacket() }, 'Print'),
+            createElement('button', { className: 'team-btn team-btn--ghost', onclick: () => this.dismissBulkPrint() }, 'Close')
+          )
+        );
+      }
+    } else {
+      const current = Math.min(bp.done + 1, bp.total);
+      const pct = bp.total ? Math.round((bp.done / bp.total) * 100) : 0;
+      card = createElement('div', { className: 'bulk-print-card' },
+        createElement('div', { className: 'bulk-print-title' }, `Building packet: ${current} of ${bp.total}`),
+        createElement('div', { className: 'bulk-print-sub' }, bp.currentName || '…'),
+        createElement('div', { className: 'bulk-print-bar' },
+          createElement('div', { className: 'bulk-print-bar__fill', style: { width: `${pct}%` } })
+        ),
+        createElement('div', { className: 'bulk-print-actions' },
+          createElement('button', { className: 'team-btn team-btn--ghost', onclick: () => { if (this.bulkPrint) this.bulkPrint.aborted = true; } }, 'Cancel')
+        )
+      );
+    }
+    const overlay = createElement('div', { id: 'bulk-print-overlay', className: 'bulk-print-overlay' }, card);
+    document.body.appendChild(overlay);
+  }
+
+  /** Fires the browser print dialog for the assembled packet, then tidies up. */
+  printBulkPacket() {
+    const overlay = document.getElementById('bulk-print-overlay');
+    if (overlay) overlay.style.display = 'none'; // never let the overlay print
+    const savedScroll = window.scrollY;
+    setTimeout(() => {
+      window.print();
+      setTimeout(() => {
+        window.scrollTo(0, savedScroll);
+        this.dismissBulkPrint();
+      }, 500);
+    }, 150);
+  }
+
+  /** Removes the overlay, clears the print containers, and ends the bulk-print session. */
+  dismissBulkPrint() {
+    const overlay = document.getElementById('bulk-print-overlay');
+    if (overlay) overlay.remove();
+    try {
+      this.getPrintContainer('print-container').innerHTML = '';
+      this.getPrintContainer('lineup-print-container').innerHTML = '';
+    } catch (_) { /* containers may not exist yet */ }
+    this.bulkPrint = null;
+  }
+
   toggleInfo() {
     this.showInfoPanel = !this.showInfoPanel;
     this.render();
@@ -1512,6 +1669,43 @@ createElement('div', { style: { flex: 1 } },
       }
     });
 
+    // Team print packet: one-click "print every hitter on a team" from the picker.
+    const { teams: packetTeams, teamlessCount } = teamsFromBattersIndex(BATTERS_INDEX);
+    if (!this.packetTeam || !packetTeams.includes(this.packetTeam)) this.packetTeam = packetTeams[0] || '';
+    const rosterCount = (team) => rosterForTeam(BATTERS_INDEX, team).length;
+
+    const teamSelect = createElement('select', {
+      id: 'packet-team-select',
+      style: { flex: '1 1 auto', minWidth: '0', padding: '10px 12px', fontSize: '14px', border: '1px solid #cbd5e1', borderRadius: '8px', background: 'white' },
+      onchange: (e) => {
+        this.packetTeam = e.target.value;
+        const btn = document.getElementById('packet-print-btn');
+        if (btn) btn.textContent = `Print all hitters (${rosterCount(this.packetTeam)})`;
+      }
+    }, ...packetTeams.map(t => createElement('option', { value: t }, t)));
+    teamSelect.value = this.packetTeam;
+
+    const packetBtn = createElement('button', {
+      id: 'packet-print-btn', className: 'team-btn',
+      style: { flex: '0 0 auto', whiteSpace: 'nowrap' },
+      onclick: () => { if (this.packetTeam) this.printTeamPacket(this.packetTeam); }
+    }, `Print all hitters (${rosterCount(this.packetTeam)})`);
+
+    const packetRow = packetTeams.length ? createElement('div', {
+      className: 'team-packet-row',
+      style: { maxWidth: '620px', margin: '0 auto 16px' }
+    },
+      createElement('div', { style: { display: 'flex', alignItems: 'center', gap: '10px' } },
+        createElement('span', { style: { flex: '0 0 auto', fontSize: '13px', fontWeight: '600', color: '#475569' } }, 'Team print packet'),
+        teamSelect,
+        packetBtn
+      ),
+      teamlessCount > 0 ? createElement('div', {
+        className: 'team-packet-note',
+        style: { fontSize: '11px', color: '#94a3b8', marginTop: '6px', textAlign: 'left' }
+      }, `${teamlessCount} batter${teamlessCount === 1 ? '' : 's'} have no team on record and are excluded`) : null
+    ) : null;
+
     return createElement('div', { className: 'team-select-screen' },
       createElement('h1', {}, 'Select a Batter'),
       createElement('p', { style: { 'margin-bottom': '16px', fontSize: '15px', color: '#64748b', lineHeight: '1.4' } },
@@ -1521,6 +1715,7 @@ createElement('div', { style: { flex: 1 } },
         createElement('span', { className: 'info-bubble' }, `${BATTERS_INDEX.length} batters`)
       ),
       searchEl,
+      packetRow,
       listEl
     );
   }

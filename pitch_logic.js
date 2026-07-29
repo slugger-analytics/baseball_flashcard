@@ -194,6 +194,72 @@ function getVisiblePitches(batterData, settings) {
   return { pitches: ordered, bucketCtx, populationCount: population.length };
 }
 
+// ── Team print-packet helpers ────────────────────────────────────────────────
+// Pure helpers behind the batter-picker's "Team print packet" flow. Kept here (not
+// in app.js) so they can be unit-tested under node:test without a DOM.
+
+/**
+ * Distinct, sorted, non-empty team names present in the batter index, plus a count
+ * of batters carrying no team (excluded from any packet).
+ * @param {Array<{team?:string}>} index - BATTERS_INDEX rows.
+ * @returns {{teams:string[], teamlessCount:number}}
+ */
+function teamsFromBattersIndex(index) {
+  const set = new Set();
+  let teamlessCount = 0;
+  for (const b of (index || [])) {
+    const team = b && b.team ? String(b.team).trim() : '';
+    if (team) set.add(team);
+    else teamlessCount++;
+  }
+  return { teams: [...set].sort((a, b) => a.localeCompare(b)), teamlessCount };
+}
+
+/**
+ * The batters in the index that belong to `team` (exact match).
+ * @param {Array<{team?:string}>} index - BATTERS_INDEX rows.
+ * @param {string} team - Team name to filter on.
+ * @returns {Array<Object>}
+ */
+function rosterForTeam(index, team) {
+  return (index || []).filter(b => b && b.team === team);
+}
+
+/**
+ * Flattens every batter profile across all team keys of a teamsData object into one
+ * list ordered by pitch volume (most pitches first). The sort is stable, so profiles
+ * with equal pitch counts keep their flatten order (team-key order, then within-team).
+ * @param {Object} teamsData - map of team key → array of batter profiles.
+ * @returns {Array<Object>} profiles in print order.
+ */
+function orderProfilesForPrint(teamsData) {
+  const profiles = [];
+  for (const teamKey of Object.keys(teamsData || {})) {
+    for (const profile of (teamsData[teamKey] || [])) profiles.push(profile);
+  }
+  const pitchesOf = (p) => (p && p.stats && p.stats.totalPitches) || 0;
+  return profiles.sort((a, b) => pitchesOf(b) - pitchesOf(a)); // Array.sort is stable
+}
+
+/**
+ * Immutably derives the settings used for a bulk team print: neutralizes the five
+ * batter-scoped display toggles so every card in the packet renders consistently,
+ * while preserving all other settings (circle size, bucket min, thresholds, …).
+ * Never mutates the input.
+ * @param {Object} current - the live CURRENT_SETTINGS.
+ * @returns {Object} a new settings object.
+ */
+function bulkPrintSettings(current) {
+  return {
+    ...current,
+    pitcherHandFilter: 'All',
+    hiddenPitchTypes: [],
+    circleColorMode: 'both',
+    maxCirclesPerBucket: 1,
+    swingsOnly: false,
+  };
+}
+
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     BUCKET_RATING_EDGE,
@@ -203,5 +269,9 @@ if (typeof module !== 'undefined' && module.exports) {
     interleave,
     computeBucketRatings,
     getVisiblePitches,
+    teamsFromBattersIndex,
+    rosterForTeam,
+    orderProfilesForPrint,
+    bulkPrintSettings,
   };
 }

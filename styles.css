@@ -1054,6 +1054,52 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
   text-align: center;
 }
 
+/* Bulk team print-packet overlay (batter picker → "Print all hitters"). */
+.bulk-print-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 4000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 23, 42, 0.55);
+  padding: 20px;
+}
+.bulk-print-card {
+  background: white;
+  border-radius: 14px;
+  padding: 22px 24px;
+  width: 100%;
+  max-width: 420px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+  text-align: center;
+}
+.bulk-print-title { font-size: 18px; font-weight: 700; color: #1e293b; }
+.bulk-print-sub { font-size: 13px; color: #64748b; margin-top: 6px; word-break: break-word; }
+.bulk-print-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  overflow: hidden;
+  margin: 14px 0 4px;
+}
+.bulk-print-bar__fill {
+  height: 100%;
+  background: #2563eb;
+  border-radius: 999px;
+  transition: width 0.2s ease;
+}
+.bulk-print-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  margin-top: 16px;
+}
+.bulk-print-actions .team-btn--ghost {
+  background: #f1f5f9;
+  color: #475569;
+}
+
 /* Overlays & Modals */
 .info-overlay, .settings-overlay {
   position: fixed;
@@ -1933,14 +1979,17 @@ button:active {
   }
 
   /* Keep the main app hidden to prevent viewport freezing */
-  #app { 
+  #app {
     position: absolute !important;
-    visibility: hidden !important; 
+    visibility: hidden !important;
     opacity: 0 !important;
-    height: 0 !important; 
+    height: 0 !important;
     overflow: hidden !important;
     z-index: -999 !important;
   }
+
+  /* The bulk-print overlay lives on <body> (outside #app) — keep it off the page. */
+  .bulk-print-overlay { display: none !important; }
 
   /* Ensure print containers can expand to fit all 9 pages */
   #print-container, #lineup-print-container {
