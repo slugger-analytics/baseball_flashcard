@@ -1046,6 +1046,14 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
 
 .print-widget .out-breakdown { font-size: 11px; }
 
+/* Out-pitch finish location: a quiet caption under the breakdown row. */
+.out-location {
+  margin-top: 4px;
+  font-size: 11px;
+  color: #64748b;
+  text-align: center;
+}
+
 /* Overlays & Modals */
 .info-overlay, .settings-overlay {
   position: fixed;

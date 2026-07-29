@@ -325,7 +325,7 @@ function makeReadMore(sectionKey, expandedContent, appRef) {
 // zones (zoneAnalysis[zone].vg / .hg). Mirrors the loadBatterCard pitch-group map.
 const PITCH_GROUP_DISPLAY = { Fastballs: 'Fastballs', Breaking: 'Breaking Balls', Offspeed: 'Offspeed' };
 
-function createTendencies(tendencies, stats, zoneAnalysis, powerSequence, powerSequenceBreakdown) {
+function createTendencies(tendencies, stats, zoneAnalysis, powerSequence, powerSequenceBreakdown, powerSequenceLocation) {
 const stripPercents = (text) => {
     if (typeof text !== 'string') return text;
     return text
@@ -485,6 +485,12 @@ const stripPercents = (text) => {
             createElement('span', { className: 'out-breakdown-item out-breakdown-contact', title: 'Contact out (ball in play)' }, `Contact ${powerSequenceBreakdown.contactOut}`)
           )
         : null,
+      // Finish location of the out pitch (server-gated). Kept out of the main text
+      // so stripPercents never mangles the "count/total" figure.
+      powerSequenceLocation
+        ? createElement('div', { className: 'out-location' },
+            `Finish loc: ${powerSequenceLocation.zone} (${powerSequenceLocation.count}/${powerSequenceLocation.total})`)
+        : null,
     ),
     createElement('div', { className: 'power-sequence threat-box' },
       createElement('h4', { style: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' } },
@@ -589,7 +595,7 @@ buildPrintPage(batter, teamName, orderIndex) {
     }
 
     const pitchSection = createElement('div', { className: 'pitch-zone-section' }, pitchZoneInnerPrint);
-    const infoSection = createTendencies(batter.tendencies, batter.stats, batter.zoneAnalysis, batter.powerSequence, batter.powerSequenceBreakdown);
+    const infoSection = createTendencies(batter.tendencies, batter.stats, batter.zoneAnalysis, batter.powerSequence, batter.powerSequenceBreakdown, batter.powerSequenceLocation);
     const widget = createElement('div', { className: 'widget print-widget' },
       header,
       pitchSection,
@@ -1956,6 +1962,7 @@ createElement('div', { style: { flex: 1 } },
                     createElement('strong', {}, 'K👁'), ' = strikeout looking (called strike 3). ',
                     createElement('strong', {}, 'Contact'), ' = ball put in play for an out.'
                   ),
+                  createElement('p', {}, 'When the out pitch finishes in the same spot often enough, a ', createElement('strong', {}, 'Finish loc'), ' line appears (e.g. "Finish loc: Low-Out (7/12)") — shown only with at least 5 located finishes on that pitch and when one zone holds 40%+ of them.'),
                   createElement('p', { style: { color: '#64748b' } }, 'More outs in the sample = more reliable signal. Low-data batters may show "Insufficient data."')
                 )
               )
@@ -2011,7 +2018,7 @@ createElement('div', { style: { flex: 1 } },
         )
       ) : null,
       (() => {
-        const tendenciesEl = createTendencies(data.tendencies, data.stats, data.zoneAnalysis, data.powerSequence, data.powerSequenceBreakdown);
+        const tendenciesEl = createTendencies(data.tendencies, data.stats, data.zoneAnalysis, data.powerSequence, data.powerSequenceBreakdown, data.powerSequenceLocation);
 
         const rawZones = data.pitchZones || [];
         const { pitches: visiblePitches, bucketCtx } = getVisiblePitches(data);

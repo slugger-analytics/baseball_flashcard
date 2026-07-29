@@ -9,6 +9,7 @@ const { withParserAsStream } = require('stream-json/streamers/stream-array.js');
 const {
   isZeroZeroPitch, classifyZeroZeroCall, firstPitchMetric, firstPitchLabel, poolLeagueFirstPitch,
   getZoneFromLocation, getPitchGroup, computeZoneGroupAnnotations, PITCH_GROUP_TAXONOMY,
+  analyzeOutSequences,
 } = require('./lib/stats.js');
 const { buildCanonicalNameMap, dedupeBatters } = require('./lib/players.js');
 
@@ -647,7 +648,12 @@ function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 9
           shortSequence: shortSeq,
           outType: pitch.k_or_bb === 'Strikeout' ? 'K' : pitch.play_result,
           wasSwinging: pitch.pitch_call === 'StrikeSwinging',
-          pitchCount: currentPA.pitches.length
+          pitchCount: currentPA.pitches.length,
+          // Finish zone from this pitch's own plate coords → immune to the known
+          // cross-game paKey collision (per-pitch fields, never paKey-derived).
+          zone: (pitch.plate_loc_side != null && pitch.plate_loc_height != null)
+            ? getZoneFromLocation(pitch.plate_loc_side, pitch.plate_loc_height, batterData.handedness)
+            : null
         });
       }
 
@@ -673,7 +679,12 @@ function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 9
         shortSequence: shortSeq,
         outType: 'K',
         wasSwinging: pitch.pitch_call === 'StrikeSwinging',
-        pitchCount: currentPA.pitches.length
+        pitchCount: currentPA.pitches.length,
+        // Finish zone from this pitch's own plate coords → immune to the known
+        // cross-game paKey collision (per-pitch fields, never paKey-derived).
+        zone: (pitch.plate_loc_side != null && pitch.plate_loc_height != null)
+          ? getZoneFromLocation(pitch.plate_loc_side, pitch.plate_loc_height, batterData.handedness)
+          : null
       });
     }
 
@@ -823,82 +834,13 @@ function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 9
           }
         }
 
-        // Analyze pitch sequences that get OUTS (not just strikeouts)
-        function analyzeOutSequences(outSequences) {
-          if (!outSequences || outSequences.length === 0) {
-            return { text: 'Insufficient data', breakdown: null };
-          }
-
-          const total = outSequences.length;
-
-          // Count each out's two-pitch sequence (setup pitch → out pitch)
-          const sequenceCounts = {};
-
-          outSequences.forEach(out => {
-            sequenceCounts[out.shortSequence] = (sequenceCounts[out.shortSequence] || 0) + 1;
-          });
-
-          // Find sequences that appear at least twice OR represent 30%+ of outs
-          const significantSequences = Object.entries(sequenceCounts)
-            .filter(([seq, count]) => count >= 2 || (count / total) >= 0.3)
-            .sort((a, b) => b[1] - a[1]);
-
-          // Build breakdown for the top sequence's matching outs
-          function buildBreakdown(topSeq, matchingOuts) {
-            const bd = { kSwinging: 0, kLooking: 0, contactOut: 0 };
-            matchingOuts.forEach(out => {
-              if (out.outType === 'K') {
-                if (out.wasSwinging) bd.kSwinging++;
-                else bd.kLooking++;
-              } else {
-                bd.contactOut++;
-              }
-            });
-            return bd;
-          }
-
-          if (significantSequences.length > 0) {
-            const [topSeq, count] = significantSequences[0];
-            const pct = Math.round(count / total * 100);
-
-            // Show top sequence with percentage
-            let text = `${topSeq} (${count}/${total} = ${pct}%)`;
-
-            // If there's a strong second pattern, mention it too
-            if (significantSequences.length > 1 && significantSequences[1][1] >= 2) {
-              const [secondSeq, secondCount] = significantSequences[1];
-              const secondPct = Math.round(secondCount / total * 100);
-              if (secondPct >= 25) {
-                text += ` • Also: ${secondSeq} (${secondCount}/${total} = ${secondPct}%)`;
-              }
-            }
-
-            const matchingOuts = outSequences.filter(out => out.shortSequence === topSeq);
-            return { text, breakdown: buildBreakdown(topSeq, matchingOuts) };
-          }
-
-          // Fallback: if no clear pattern, show most common individual pitch that gets outs
-          const finalPitches = {};
-          outSequences.forEach(out => {
-            const lastPitch = out.shortSequence.split(' → ').pop();
-            finalPitches[lastPitch] = (finalPitches[lastPitch] || 0) + 1;
-          });
-
-          const topPitch = Object.entries(finalPitches).sort((a, b) => b[1] - a[1])[0];
-          if (!topPitch) return { text: 'Insufficient data', breakdown: null };
-
-          const matchingOuts = outSequences.filter(out => out.shortSequence.split(' → ').pop() === topPitch[0]);
-          return {
-            text: `${topPitch[0]} gets outs (${topPitch[1]}/${total})`,
-            breakdown: buildBreakdown(topPitch[0], matchingOuts)
-          };
-        }
-
-        const outResult = batter.outSequences.length > 0
-          ? analyzeOutSequences(batter.outSequences)
-          : { text: 'Insufficient data', breakdown: null };
+        // Analyze pitch sequences that get OUTS (not just strikeouts). Logic lives
+        // in lib/stats.js (analyzeOutSequences) so it can be unit-tested; it also
+        // derives the modal finish location of the out pitch (powerSequenceLocation).
+        const outResult = analyzeOutSequences(batter.outSequences);
         batter.powerSequence = outResult.text;
         batter.powerSequenceBreakdown = outResult.breakdown;
+        batter.powerSequenceLocation = outResult.location;
 
         // Annotate vulnerable/hot zones with the driving pitch group (sample-gated),
         // then drop the internal per-group accumulator so it never ships.
@@ -916,7 +858,7 @@ function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 9
   const RESPONSE_FIELDS = [
     'batter', 'handedness', 'jerseyNumber',
     'stats', 'pitchZones', 'zoneAnalysis',
-    'tendencies', 'powerSequence', 'powerSequenceBreakdown',
+    'tendencies', 'powerSequence', 'powerSequenceBreakdown', 'powerSequenceLocation',
   ];
   const slimData = {};
   for (const [teamName, batters] of Object.entries(teamsData)) {
