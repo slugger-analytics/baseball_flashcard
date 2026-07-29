@@ -13,16 +13,19 @@ test('computeBucketRatings buckets by pitch×zone and counts outcomes', () => {
     pz('SL', 'Low-In', 'hit'),
     pz('SL', 'Low-In', 'out'),
     pz('SL', 'Low-In', 'whiff'),
-    pz('FB', 'High-Out', 'take'),
+    pz('FB', 'High-Out', 'ball'),
   ];
-  const { buckets, overallRate } = computeBucketRatings(pitches, { bucketMinPitches: 1 });
+  const { buckets, baselines } = computeBucketRatings(pitches, { bucketMinPitches: 1 });
   const sl = buckets[bucketKey({ pitch: 'SL', zone: 'Low-In' })];
   assert.strictEqual(sl.total, 3);
   assert.strictEqual(sl.hit, 1);
   assert.strictEqual(sl.out, 1);
   assert.strictEqual(sl.whiff, 1);
-  // one hit out of four pitches overall
-  assert.ok(Math.abs(overallRate - 0.25) < 1e-9);
+  // Pitcher-win baseline over these four in-zone pitches: the out and the whiff
+  // are wins, the hit and the ball are losses -> 2/4.
+  assert.ok(Math.abs(baselines.zone - 0.5) < 1e-9);
+  assert.strictEqual(sl.win, 2);
+  assert.strictEqual(sl.loss, 1);
 });
 
 test('computeBucketRatings marks under-sample buckets eliminated', () => {
@@ -37,7 +40,7 @@ test('getVisiblePitches drops eliminated buckets and hidden pitch types', () => 
       pz('SL', 'Low-In', 'hit'),
       pz('SL', 'Low-In', 'out'),
       pz('SL', 'Low-In', 'whiff'),
-      pz('CH', 'Mid-Mid', 'take'), // lone CH → under min sample → eliminated
+      pz('CH', 'Mid-Mid', 'ball'), // lone CH → under min sample → eliminated
     ],
   };
   const { pitches } = getVisiblePitches(batter, { bucketMinPitches: 3, hiddenPitchTypes: [] });

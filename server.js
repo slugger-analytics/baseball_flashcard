@@ -10,6 +10,10 @@ const {
   isZeroZeroPitch, classifyZeroZeroCall, firstPitchMetric, firstPitchLabel, poolLeagueFirstPitch,
 } = require('./lib/stats.js');
 const { buildCanonicalNameMap, dedupeBatters } = require('./lib/players.js');
+// Strike zone geometry is shared with the browser client (pitch_logic.js is also
+// loaded as a plain <script> before app.js), so the labels the server assigns and
+// the grid the client draws are guaranteed to describe the same rectangle.
+const { getZoneFromLocation, plateToPercent } = require('./pitch_logic.js');
 
 // Vercel's and Lambda's filesystems are read-only except /tmp; use /tmp there, local cache/ elsewhere.
 const CACHE_DIR = (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME)
@@ -704,7 +708,7 @@ function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 9
       const zone = getZoneFromLocation(pitch.plate_loc_side, pitch.plate_loc_height, batterData.handedness);
       const pitcherHand = pitch.pitcher_throws === 'Left' ? 'L' : 'R';
       if (!batterData.zoneAnalysis[zone]) {
-        batterData.zoneAnalysis[zone] = { pitches: 0, swings: 0, whiffs: 0, fouls: 0, weakContact: 0, hardHits: 0, contact: 0, takes: 0, contactOuts: 0, contactHits: 0 };
+        batterData.zoneAnalysis[zone] = { pitches: 0, swings: 0, whiffs: 0, fouls: 0, weakContact: 0, hardHits: 0, contact: 0, calledStrikes: 0, balls: 0, contactOuts: 0, contactHits: 0 };
       }
 
       const zoneStats = batterData.zoneAnalysis[zone];
@@ -713,7 +717,8 @@ function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 9
       if (pitch.pitch_call === 'StrikeSwinging') zoneStats.whiffs++;
       if (['FoulBall', 'FoulBallFieldable', 'FoulBallNotFieldable'].includes(pitch.pitch_call)) zoneStats.fouls++;
       if (['FoulBall', 'FoulBallFieldable', 'FoulBallNotFieldable', 'InPlay'].includes(pitch.pitch_call)) zoneStats.contact++;
-      if (['BallCalled', 'StrikeCalled'].includes(pitch.pitch_call)) zoneStats.takes++;
+      if (pitch.pitch_call === 'StrikeCalled') zoneStats.calledStrikes++;
+      if (pitch.pitch_call === 'BallCalled') zoneStats.balls++;
       if (pitch.exit_speed && pitch.pitch_call === 'InPlay') {
         if (pitch.exit_speed >= 95) zoneStats.hardHits++;
         else if (pitch.exit_speed < 70) zoneStats.weakContact++;
@@ -724,28 +729,24 @@ function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 9
       }
 
       // Pitcher's perspective: the batter silhouette flanks the zone as the
-      // pitcher sees it (LHB left of the zone, RHB right). Positive
-      // plate_loc_side = catcher's left = the pitcher's RIGHT (see
-      // getZoneFromLocation), so it renders on the RIGHT of the graphic.
-      const xPos = 50 + (pitch.plate_loc_side * 25);
-      const yPos = 100 - ((pitch.plate_loc_height - 1.5) / 2 * 100);
+      // pitcher sees it (LHB left of the zone, RHB right). plateToPercent owns
+      // the projection and shares its geometry with the drawn strike zone.
+      const position = plateToPercent(pitch.plate_loc_side, pitch.plate_loc_height);
 
       // Single-word outcome per pitch so the frontend can bucket pitches any
       // way it likes (pitch type × zone × pitcher hand) and derive hit rates.
+      // Takes are split by the umpire's call: a called strike and a ball are
+      // very different reads on a batter's discipline.
       let outcome = 'other';
       if (pitch.pitch_call === 'StrikeSwinging') outcome = 'whiff';
-      else if (['BallCalled', 'StrikeCalled'].includes(pitch.pitch_call)) outcome = 'take';
+      else if (pitch.pitch_call === 'StrikeCalled') outcome = 'strike';
+      else if (pitch.pitch_call === 'BallCalled') outcome = 'ball';
       else if (['FoulBall', 'FoulBallFieldable', 'FoulBallNotFieldable'].includes(pitch.pitch_call)) outcome = 'foul';
       else if (pitch.pitch_call === 'InPlay' && ['Single', 'Double', 'Triple', 'HomeRun'].includes(pitch.play_result)) outcome = 'hit';
       else if (pitch.pitch_call === 'InPlay' && ['Out', 'FieldersChoice', 'Sacrifice'].includes(pitch.play_result)) outcome = 'out';
 
       batterData.pitchZones.push({
-        // One decimal of position precision is plenty for a %-based layout and
-        // keeps the JSON payload well under the ALB 1 MB response limit.
-        position: [
-          Math.round(Math.max(0, Math.min(100, xPos)) * 10) / 10,
-          Math.round(Math.max(0, Math.min(100, yPos)) * 10) / 10
-        ],
+        position,
         pitch: pitchType, outcome: outcome, zone: zone,
         pitcherThrows: pitcherHand
       });
@@ -903,32 +904,6 @@ function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 9
     });
   }
   return slimData;
-}
-
-/**
- * Maps a pitch's plate coordinates to a named strike zone (e.g. 'High-In', 'Mid-Out').
- *
- * Sign convention (verified empirically on the full 2026 feed, ~107k pitches):
- * positive plate_loc_side = the CATCHER'S LEFT = third-base side = where a
- * right-handed batter stands. Two independent checks agree: (1) pitchers work
- * away — pitches to RHB lean negative, to LHB positive; (2) pitch physics —
- * RHP sliders (glove-side break, catcher's right) average -0.36 while RHP
- * sinkers/changeups (arm-side run, catcher's left) average +0.22/+0.27, with
- * LHP exactly mirrored. Earlier code assumed the opposite sign, which mirrored
- * every In/Out label (and the dot positions that were later flipped to match).
- *
- * @param {number} plateSide - Horizontal plate position in feet (positive = catcher's left).
- * @param {number} plateHeight - Vertical plate position in feet above the ground.
- * @param {string} handedness - Batter handedness: 'LHB' or 'RHB'.
- * @returns {string} Zone label in the format '<Vertical>-<Horizontal>'.
- */
-function getZoneFromLocation(plateSide, plateHeight, handedness) {
-  const isInside = (handedness === 'RHB' && plateSide > 0.33) || (handedness === 'LHB' && plateSide < -0.33);
-  const isOutside = (handedness === 'RHB' && plateSide < -0.33) || (handedness === 'LHB' && plateSide > 0.33);
-  const horizontal = isInside ? 'In' : (isOutside ? 'Out' : 'Mid');
-  const isHigh = plateHeight > 3.0, isLow = plateHeight < 2.0;
-  const vertical = isHigh ? 'High' : (isLow ? 'Low' : 'Mid');
-  return `${vertical}-${horizontal}`;
 }
 
 /**

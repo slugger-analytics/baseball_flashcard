@@ -102,14 +102,81 @@ SLUGGER API (AWS API Gateway → Trackman pitch data)
 
 ## Key Algorithms
 
+### Zone Labelling
+The strike zone is defined in `pitch_logic.js` (`STRIKE_ZONE`) as ±0.833 ft horizontally
+and 1.5–3.5 ft vertically, and is split into nine equal boxes — `High-In` … `Low-Out`.
+Pitches outside the zone are labelled by how they missed and prefixed `Chase `
+(e.g. `Chase Low-Out`), so they bucket separately from the nine in-zone boxes.
+
+`getZoneFromLocation` (labels) and `plateToPercent` (the drawn grid) both derive from
+`STRIKE_ZONE`, so the rectangle on the flashcard always lands exactly where an
+on-the-edge pitch plots. They previously drifted: labels split at ±0.33 ft / 2.0–3.0 ft
+while the overlay drew a flat 33%/66% grid over a ±2 ft box, so a circle could sit in
+the middle cell and still be bucketed `High-In`.
+
+### Bucket Rating (the green/red circles)
+
+Buckets are `(pitch family × zone)`. Each is scored on how often a pitch there went
+the **pitcher's** way — whiff, called strike, foul or out are wins; a **hit or a ball**
+is a loss (`other`/HBP is neutral). Counting the ball is the crux: under the previous
+`hits ÷ pitches` metric a pitch three feet outside scored a perfect 0.000 and rated
+"attack here", and 53% of all advice the card gave was *throw it out of the zone*.
+
+Buckets are rated against an expectation **for the spot**, built in two steps.
+
+**1. Regime.** Three baselines, by how far outside the zone the pitch was:
+
+| regime | | league pitcher-win | k | edge |
+|---|---|---|---|---|
+| `zone` | the 9 in-zone boxes | 84.4% | 54 | 2.1 pts |
+| `edge` | chase missing on ONE axis (`Chase Mid-Out`) | 32.7% | 18 | 6.7 pts |
+| `deep` | chase missing on BOTH axes (`Chase High-In`) | 10.5% | 17 | 3.6 pts |
+
+Two regimes weren't enough: with all 8 chase regions sharing one 27% baseline, that
+baseline was set by the edge bands where hitters actually chase, so the diagonal
+corners came out red for nearly everyone — `Chase High-Out` for **91%** of batters.
+That's geometry, not scouting.
+
+**2. Zone offset.** Even within a regime, individual zones differ systematically —
+`Chase High-Out` runs 3.5% pitcher-win against a 10.5% regime baseline. `ZONE_LEAGUE_OFFSET`
+subtracts each zone's league-wide effect, leaving only the part that's about *this*
+batter:
+
+```
+expected   = regimeBaseline + ZONE_LEAGUE_OFFSET[zone]
+shrunkRate = (wins + k × expected) / (n + k)
+green if shrunkRate − expected ≥ +edge      red if ≤ −edge
+```
+
+Together these flatten %red across all 17 zones into a 16–46% band with no zone
+universal (`Chase High-Out`: 91% → 16%). `k = p(1−p)/τ²` from the genuine
+between-bucket spread after subtracting sampling noise (5.0 pts in zone, 11.2 edge,
+7.5 deep — where a pitch lands *in* the zone barely matters; where you *miss* matters
+a lot). All constants live in `pitch_logic.js`, fitted on 45 batters / ~40k pitches.
+
+**Color Sensitivity** (`ratingSensitivity`, 1–5, default 3) scales `edge`. Because
+shrinkage has already pulled thin buckets onto the baseline, loosening the edge
+surfaces smaller *real* differences rather than resurrecting noise — it is a display
+preference, not a statistical one. Measured share of buckets:
+
+| level | multiplier | green | red | gray |
+|---|---|---|---|---|
+| 1 Strict | 1.00 | 13% | 19% | 68% |
+| 3 Balanced (default) | 0.50 | 29% | 35% | 36% |
+| 5 Very loose | 0.20 | 41% | 46% | 13% |
+
+Below ~0.4 an all-win 3-pitch in-zone bucket starts clearing the bar, so the loosest
+levels lean on `bucketMinPitches` to hold the line.
+
 ### Weakness Zone Scoring
-Each of the nine strike zone cells is scored:
+Each zone present in `zoneAnalysis` is scored:
 
 ```
 composite = 0.45 × rank(whiff%) + 0.35 × rank(weak contact%) + 0.20 × rank(chase/foul%)
 ```
 
 Higher composite = stronger weakness. Zones are sorted and the top N are shown depending on the confidence tier.
+Note that `Chase ` zones are ranked alongside the nine in-zone boxes, so up to 17 zones can compete.
 
 ### Confidence Gating
 Three tiers control which zones are displayed:

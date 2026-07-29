@@ -713,17 +713,22 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
   order: 1;
 }
 
-.pitch-zone::after {
-  content: '';
+/* The strike zone proper, drawn inside the larger canvas so balls and chase
+   pitches land visibly outside it. Position and size come from ZONE_PCT via
+   inline styles (see createStrikeZoneOverlay) — the same geometry the server
+   uses to plot circles — so the rectangle and the dots can never disagree. */
+.strike-zone {
   position: absolute;
-  top: 0; left: 0; right: 0; bottom: 0;
   pointer-events: none;
-  background-image: 
-    linear-gradient(to right, transparent calc(33.333% - 0.5px), #e2e8f0 calc(33.333% - 0.5px), #e2e8f0 calc(33.333% + 0.5px), transparent calc(33.333% + 0.5px)),
-    linear-gradient(to right, transparent calc(66.666% - 0.5px), #e2e8f0 calc(66.666% - 0.5px), #e2e8f0 calc(66.666% + 0.5px), transparent calc(66.666% + 0.5px)),
-    linear-gradient(to bottom, transparent calc(33.333% - 0.5px), #e2e8f0 calc(33.333% - 0.5px), #e2e8f0 calc(33.333% + 0.5px), transparent calc(33.333% + 0.5px)),
-    linear-gradient(to bottom, transparent calc(66.666% - 0.5px), #e2e8f0 calc(66.666% - 0.5px), #e2e8f0 calc(66.666% + 0.5px), transparent calc(66.666% + 0.5px));
+  border: 2px solid #94a3b8;
+  background: #f8fafc;
   z-index: 1;
+}
+
+/* Interior lines splitting the zone into the 9 boxes. Colour is set inline for
+   print reliability; the rule keeps them out of the hit-testing path. */
+.strike-zone__line {
+  pointer-events: none;
 }
 
 .pitch-circle {
@@ -994,9 +999,95 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
   color: #fff;
 }
 
+.zone-tooltip-pill--chase {
+  background: #64748b;
+  color: #fff;
+}
+
+/* Bucket composition — which specific pitch types made up this family bucket.
+   Counts only; per-type rates at bucket size are not distinguishable from noise. */
+.zone-tooltip-composition {
+  font-size: 11px;
+  color: #cbd5e1;
+  padding: 2px 0 6px;
+  border-bottom: 1px solid rgba(255,255,255,0.15);
+  margin-bottom: 6px;
+}
+
 .zone-tooltip-table {
   width: 100%;
   border-collapse: collapse;
+}
+
+/* ── Arsenal table: per-pitch-type whiff rates pooled across all zones ────── */
+.arsenal {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 12px 14px;
+  box-shadow: var(--shadow-md);
+  margin: 12px 0;
+}
+
+.arsenal__title {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #475569;
+  margin-bottom: 8px;
+}
+
+.arsenal__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.arsenal__table td {
+  padding: 3px 4px;
+  font-size: 13px;
+}
+
+.arsenal__family-row .arsenal__family {
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.arsenal__family-row .arsenal__rate {
+  font-weight: 700;
+}
+
+.arsenal__type-row .arsenal__type {
+  padding-left: 16px;
+  color: #64748b;
+}
+
+.arsenal__type-row td {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.arsenal__rate {
+  text-align: right;
+  width: 4.5em;
+  color: #0f172a;
+}
+
+/* Sample too thin to quote a rate for. */
+.arsenal__rate--thin { color: #94a3b8; }
+
+.arsenal__ci {
+  text-align: right;
+  color: #94a3b8;
+  font-size: 11px;
+  width: 8em;
+}
+
+.arsenal__foot {
+  margin-top: 8px;
+  font-size: 10px;
+  color: #94a3b8;
 }
 
 .zone-tooltip-table td {
@@ -1020,6 +1111,21 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
 
 .zone-tooltip-table tr.zone-tooltip-rate + tr.zone-tooltip-rate td {
   border-top: none;
+}
+
+/* The signed gap from his baseline — the quantity the colour is read off. */
+.zone-tooltip-table tr.zone-tooltip-delta td {
+  color: #fbbf24;
+  font-weight: 700;
+}
+
+.zone-tooltip-note {
+  margin-top: 6px;
+  padding-top: 5px;
+  border-top: 1px solid rgba(255,255,255,0.15);
+  font-size: 10px;
+  line-height: 1.35;
+  color: #94a3b8;
 }
 
 /* ── Out Pitch outcome breakdown row ─────────────────── */
@@ -1458,6 +1564,15 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
   color: #374151;
   flex: 1;
   line-height: 1.3;
+}
+
+/* Sub-label under a control, for settings whose direction isn't self-evident. */
+.setting-hint {
+  flex-basis: 100%;
+  margin-top: 4px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: #94a3b8;
 }
 
 .setting-input-group {
@@ -1996,15 +2111,14 @@ button:active {
   }
   
   /* THE GRID LINE FIX: Solid mid-gray shows up on both Black (iOS) and White (Desktop) backgrounds */
-  .print-widget .pitch-zone line,
-  .print-widget .zone-grid,
-  .print-widget .zone-grid div {
-    stroke: #888888 !important; 
-    border-color: #888888 !important;
+  .print-widget .strike-zone {
+    border-color: #666666 !important;
+    background: transparent !important;
+    opacity: 1 !important;
   }
 
-  .print-widget .pitch-zone line {
-    stroke-width: 3px !important; 
+  .print-widget .strike-zone__line {
+    background-color: #888888 !important;
     opacity: 1 !important;
   }
 
@@ -2113,7 +2227,28 @@ button:active {
   .print-widget .pitch-circle--good { background: #10b981 !important; }
   .print-widget .pitch-circle--bad  { background: #ef4444 !important; }
   /* TURN OFF THE OLD CSS GRID FOR PRINTING */
-  .print-widget .pitch-zone::after { display: none !important; }
+  /* The strike zone overlay is real DOM now, so nothing to suppress here — but it
+     must stay above the white base block the print path injects. */
+  .print-widget .strike-zone { z-index: 1 !important; }
+
+  /* Arsenal table: the breakdown behind the family labels. It exists on paper
+     precisely because hover does not — this is the dugout copy. */
+  .print-widget .arsenal {
+    background: #ffffff !important;
+    border: 1px solid #888888 !important;
+    box-shadow: none !important;
+    padding: 6pt 8pt !important;
+    margin: 6pt 0 !important;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .print-widget .arsenal__title { color: #000000 !important; font-size: 8pt !important; }
+  .print-widget .arsenal__table td { font-size: 8.5pt !important; padding: 1pt 3pt !important; }
+  .print-widget .arsenal__family-row .arsenal__family,
+  .print-widget .arsenal__family-row .arsenal__rate { color: #000000 !important; }
+  .print-widget .arsenal__type-row td { color: #444444 !important; font-size: 8pt !important; }
+  .print-widget .arsenal__ci { color: #666666 !important; font-size: 7.5pt !important; }
+  .print-widget .arsenal__foot { color: #666666 !important; font-size: 6.5pt !important; }
 }
 
 .team-btn:hover {

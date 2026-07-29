@@ -17,7 +17,8 @@ const DEFAULT_SETTINGS = {
   circleColorMode: 'both',     // 'both' | 'green' | 'red' — which rated circles to show
   pitcherHandFilter: 'All',   // 'All' | 'L' | 'R' — restrict circles to one pitcher hand
   hiddenPitchTypes: [],       // pitch abbreviations (e.g. 'SL') currently hidden from the grid
-  bucketMinPitches: 3,        // (pitch type × zone) buckets under this size are dropped from the grid
+  bucketMinPitches: 3,        // (pitch family × zone) buckets under this size are dropped from the grid
+  ratingSensitivity: 3,       // 1 (strict, most gray) .. 5 (loose, most colour)
   maxCirclesPerBucket: 1,     // circles kept per (pitch type × zone) bucket; 'All' = uncapped
   swingsOnly: false,          // restrict the population to swings (drop takes + other)
   pitchCircleSize: 38
@@ -125,9 +126,92 @@ function createElement(tag, props = {}, ...children) {
   });
   return el;
 }
-// BUCKET_RATING_EDGE, bucketKey, computeBucketRatings and getVisiblePitches now
-// live in pitch_logic.js (loaded before app.js) so they can be unit-tested under
-// node:test. app.js calls them as globals.
+// BUCKET_RATING_EDGE, bucketKey, computeBucketRatings, getVisiblePitches and the
+// strike zone geometry (STRIKE_ZONE, ZONE_PCT, plateToPercent, getZoneFromLocation)
+// now live in pitch_logic.js (loaded before app.js) so they can be unit-tested
+// under node:test and shared with the server. app.js calls them as globals.
+
+/**
+ * Builds the strike zone overlay: the zone rectangle plus the two interior lines
+ * on each axis that split it into the 9 boxes getZoneFromLocation names.
+ *
+ * Positioned from ZONE_PCT, the same geometry the server's plateToPercent uses to
+ * plot circles, so the drawn rectangle lands exactly where an on-the-edge pitch
+ * plots no matter the element's pixel size or aspect ratio. Built from real
+ * elements with inline styles rather than a CSS background gradient because iOS
+ * Safari drops background images when printing — the same reason the print path
+ * used to inject a second, hard-coded set of gridlines.
+ */
+function createStrikeZoneOverlay() {
+  const line = (style) => createElement('div', {
+    className: 'strike-zone__line',
+    style: { position: 'absolute', backgroundColor: '#cbd5e1', ...style }
+  });
+  return createElement('div', {
+    className: 'strike-zone',
+    style: {
+      left: `${ZONE_PCT.left}%`,
+      top: `${ZONE_PCT.top}%`,
+      width: `${ZONE_PCT.right - ZONE_PCT.left}%`,
+      height: `${ZONE_PCT.bottom - ZONE_PCT.top}%`
+    }
+  },
+    // Interior thirds, expressed relative to the zone box rather than the canvas.
+    line({ top: '0', bottom: '0', left: '33.333%', width: '1px' }),
+    line({ top: '0', bottom: '0', left: '66.666%', width: '1px' }),
+    line({ left: '0', right: '0', top: '33.333%', height: '1px' }),
+    line({ left: '0', right: '0', top: '66.666%', height: '1px' })
+  );
+}
+
+/**
+ * Builds the arsenal table: how the batter handles each pitch type, pooled across
+ * all zones.
+ *
+ * This is the breakdown behind the family labels on the zone graphic. It lives at
+ * the batter level rather than per-bucket because that is the only level the data
+ * supports — pooled over zones a type carries ~92 swings (+/-9 points, p<0.001);
+ * inside one bucket it carries ~6-10 (+/-28 to +/-37, indistinguishable from
+ * noise). So the zone graphic answers "where", this answers "what", and neither
+ * claims to answer both.
+ *
+ * Rows under computeArsenal's swing minimum show their counts but no rate.
+ * Rendered as real elements (not a hover surface) so it prints — the dugout copy
+ * is paper, where there is no hover.
+ */
+function createArsenal(batterData) {
+  const { families, totalSwings, minSwings } = computeArsenal(batterData);
+  if (!families.length || totalSwings === 0) return null;
+
+  const pct = (r) => `${(r * 100).toFixed(0)}%`;
+  const rateCells = (e) => e.whiffRate === null
+    ? [createElement('td', { className: 'arsenal__rate arsenal__rate--thin' }, '—'),
+       createElement('td', { className: 'arsenal__ci' }, `${e.swings} sw`)]
+    : [createElement('td', { className: 'arsenal__rate' }, pct(e.whiffRate)),
+       createElement('td', { className: 'arsenal__ci' }, `±${(e.ci * 100).toFixed(0)} · ${e.swings} sw`)];
+
+  const rows = [];
+  families.forEach(f => {
+    rows.push(createElement('tr', { className: 'arsenal__family-row' },
+      createElement('td', { className: 'arsenal__family' }, f.label),
+      ...rateCells(f)
+    ));
+    // Only worth listing members when the family is actually a mix.
+    if (f.types.length > 1) {
+      f.types.forEach(e => rows.push(createElement('tr', { className: 'arsenal__type-row' },
+        createElement('td', { className: 'arsenal__type' }, e.pitch),
+        ...rateCells(e)
+      )));
+    }
+  });
+
+  return createElement('div', { className: 'arsenal' },
+    createElement('div', { className: 'arsenal__title' }, 'How he handles each pitch'),
+    createElement('table', { className: 'arsenal__table' }, createElement('tbody', {}, ...rows)),
+    createElement('div', { className: 'arsenal__foot' },
+      `whiff per swing · all zones · rate hidden under ${minSwings} swings`)
+  );
+}
 
 /**
  * Decodes the server's columnar pitchZones ("pz" columns + metadata.pzLegend)
@@ -188,25 +272,43 @@ function createPitchZone(preFilteredZones, handedness, bucketCtx) {
     const handPill = zone.pitcherThrows
       ? `<span class="zone-tooltip-pill zone-tooltip-pill--hand">${zone.pitcherThrows}HP</span>`
       : '';
-    const bucketRate = b.rate !== null ? `${(b.rate * 100).toFixed(1)}%` : '—';
-    const overallRate = bucketCtx.overallRate !== null && bucketCtx.overallRate !== undefined
-      ? `${(bucketCtx.overallRate * 100).toFixed(1)}%` : '—';
+    // Name the regime, not just "out of zone": a pitch just off the plate and one
+    // in the diagonal corner are rated against different baselines.
+    const chasePill = b.regime === 'edge'
+      ? `<span class="zone-tooltip-pill zone-tooltip-pill--chase">Off the edge</span>`
+      : b.regime === 'deep'
+        ? `<span class="zone-tooltip-pill zone-tooltip-pill--chase">Well outside</span>`
+        : '';
+    const pc = (v) => (v === null || v === undefined) ? '—' : `${(v * 100).toFixed(1)}%`;
+    // Colour is read off the SHRUNK rate, so that is the number shown against the
+    // baseline. The raw tally sits beside it so a thin bucket is self-evident.
+    const decisive = b.win + b.loss;
+    const expectedLabel = `Expected here (${REGIME_LABEL[b.regime] || 'overall'})`;
+    const deltaTxt = b.delta === null ? '—'
+      : `${b.delta >= 0 ? '+' : ''}${(b.delta * 100).toFixed(1)} pts`;
     tip.innerHTML = `
       <div class="zone-tooltip-header">
-        <span class="zone-tooltip-title">${b.pitch} · ${b.zone}</span>
-        <span class="zone-tooltip-pills">${ratingPill}${handPill}</span>
+        <span class="zone-tooltip-title">${b.label} · ${b.zone}</span>
+        <span class="zone-tooltip-pills">${ratingPill}${chasePill}${handPill}</span>
       </div>
+      <div class="zone-tooltip-composition">${formatComposition(b.types)}</div>
       <table class="zone-tooltip-table">
         <tr><td>Total</td><td>${b.total}</td></tr>
         <tr><td>Whiff (K↩)</td><td>${b.whiff}</td></tr>
-        <tr><td>Take</td><td>${b.take}</td></tr>
+        <tr><td>Called strike</td><td>${b.strike}</td></tr>
+        <tr><td>Ball</td><td>${b.ball}</td></tr>
         <tr><td>Contact out</td><td>${b.out}</td></tr>
         <tr><td>Contact hit</td><td>${b.hit}</td></tr>
         <tr><td>Foul</td><td>${b.foul}</td></tr>
         ${b.other > 0 ? `<tr><td>Other</td><td>${b.other}</td></tr>` : ''}
-        <tr class="zone-tooltip-rate"><td>Hit rate here</td><td>${bucketRate}</td></tr>
-        <tr class="zone-tooltip-rate"><td>Batter overall</td><td>${overallRate}</td></tr>
-      </table>`;
+        <tr class="zone-tooltip-rate"><td>Pitcher wins</td><td>${b.win}/${decisive} = ${pc(b.winRate)}</td></tr>
+        <tr class="zone-tooltip-rate"><td>Adjusted</td><td>${pc(b.shrunkRate)}</td></tr>
+        <tr class="zone-tooltip-rate"><td>${expectedLabel}</td><td>${pc(b.expected)}</td></tr>
+        <tr class="zone-tooltip-delta"><td>Difference</td><td>${deltaTxt}</td></tr>
+      </table>
+      <div class="zone-tooltip-note">Win = whiff, called strike, foul or out. A ball counts against the pitcher.
+        "Expected" is his level for this part of the plate, corrected for how hard that spot is league-wide —
+        so a colour here means this batter is unusual, not that the spot is.</div>`;
     document.body.appendChild(tip);
     const rect = circleEl.getBoundingClientRect();
     const tipW = 180;
@@ -223,7 +325,9 @@ function createPitchZone(preFilteredZones, handedness, bucketCtx) {
 
   const pitchElements = displayZones.map((zone, idx) => {
     const [x, y] = zone.position || [50, 50];
-    const pitchType = zone.pitch || 'F';
+    // Circles are labelled by FAMILY, the unit buckets are built on. The specific
+    // type that produced this particular circle lives in the tooltip composition.
+    const pitchType = pitchFamily(zone.pitch);
     const rating = zone.rating || 'neutral';
     const colorClass = rating === 'green' ? 'pitch-circle--good'
       : rating === 'red' ? 'pitch-circle--bad'
@@ -260,7 +364,7 @@ function createPitchZone(preFilteredZones, handedness, bucketCtx) {
     className: `batter-graphic ${batterClass}`,
     title: isLeftHanded ? 'Left-Handed Batter' : 'Right-Handed Batter'
   }, svgImg);
-  const pitchZone = createElement('div', { className: 'pitch-zone' }, ...pitchElements);
+  const pitchZone = createElement('div', { className: 'pitch-zone' }, createStrikeZoneOverlay(), ...pitchElements);
   pitchZone.style.setProperty('--pitch-circle-size', `${CURRENT_SETTINGS.pitchCircleSize}px`);
   const el = createElement('div', { className: 'pitch-zone-container' },
     batterGraphic,
@@ -551,24 +655,16 @@ buildPrintPage(batter, teamName, orderIndex) {
     const { pitches: printPitches, bucketCtx: printBucketCtx } = getVisiblePitches(batter);
     const { el: pitchZoneInnerPrint } = createPitchZone(printPitches, batter.handedness, printBucketCtx);
     
-    // THE iOS PRINT HACK: BUILD A PURE HTML GRID RIGHT BEFORE PRINTING
+    // THE iOS PRINT HACK: force a physical white background block behind everything.
+    // The grid itself no longer needs injecting here — createStrikeZoneOverlay already
+    // builds it from real elements with inline styles, positioned from the shared
+    // ZONE_PCT geometry. The old hard-coded 33.33%/66.66% lines spanned the whole
+    // canvas and would now contradict the drawn strike zone.
     const zoneEl = pitchZoneInnerPrint.querySelector('.pitch-zone');
     if (zoneEl) {
-      // 1. Force a physical white background block
-      const whiteBase = createElement('div', { 
-        style: { position: 'absolute', top: '0', left: '0', width: '100%', height: '100%', backgroundColor: '#ffffff', zIndex: '0' } 
+      const whiteBase = createElement('div', {
+        style: { position: 'absolute', top: '0', left: '0', width: '100%', height: '100%', backgroundColor: '#ffffff', zIndex: '0' }
       });
-      // 2. Physical HTML grid lines
-      const v1 = createElement('div', { style: { position: 'absolute', top: '0', bottom: '0', left: '33.33%', width: '2px', backgroundColor: '#888888', zIndex: '1' } });
-      const v2 = createElement('div', { style: { position: 'absolute', top: '0', bottom: '0', left: '66.66%', width: '2px', backgroundColor: '#888888', zIndex: '1' } });
-      const h1 = createElement('div', { style: { position: 'absolute', left: '0', right: '0', top: '33.33%', height: '2px', backgroundColor: '#888888', zIndex: '1' } });
-      const h2 = createElement('div', { style: { position: 'absolute', left: '0', right: '0', top: '66.66%', height: '2px', backgroundColor: '#888888', zIndex: '1' } });
-      
-      // Inject them at the very back of the pitch zone (behind the pitches)
-      zoneEl.insertBefore(h2, zoneEl.firstChild);
-      zoneEl.insertBefore(h1, zoneEl.firstChild);
-      zoneEl.insertBefore(v2, zoneEl.firstChild);
-      zoneEl.insertBefore(v1, zoneEl.firstChild);
       zoneEl.insertBefore(whiteBase, zoneEl.firstChild);
     }
 
@@ -577,6 +673,7 @@ buildPrintPage(batter, teamName, orderIndex) {
     const widget = createElement('div', { className: 'widget print-widget' },
       header,
       pitchSection,
+      createArsenal(batter),
       infoSection
     );
     return createElement('div', { className: 'print-page' }, widget);
@@ -1614,7 +1711,7 @@ createElement('div', { style: { flex: 1 } },
               ...[
                 { label: 'Total Pitches',                   value: rawCount, bg: '#f1f5f9', border: '#cbd5e1', textColor: '#1e293b' },
                 { label: 'Matching Filters',                 value: displayedCount,    bg: '#eff6ff', border: '#93c5fd', textColor: '#1d4ed8', tooltip: 'Pitches currently shown on the grid (limited by Max Pitches Displayed).' },
-                { label: 'Green Zone',  value: displayedGoodCount, bg: '#f0fdf4', border: '#86efac', textColor: '#15803d', tooltip: 'Displayed pitches in zones where the batter hits 25%+ below his overall rate.' },
+                { label: 'Green Zone',  value: displayedGoodCount, bg: '#f0fdf4', border: '#86efac', textColor: '#15803d', tooltip: 'Displayed pitches where the pitcher wins meaningfully more often than his average against this batter.' },
                 { label: 'Red Zone',   value: displayedBadCount,  bg: '#fef2f2', border: '#fca5a5', textColor: '#b91c1c', tooltip: 'Displayed pitches in zones where the batter hits 25%+ above his overall rate.' },
               ].map(({ label, value, bg, border, textColor, tooltip }) =>
                 createElement('div', { className: 'stat-pill', ...(tooltip ? { 'data-tooltip': tooltip } : {}), style: { display: 'inline-flex', flexDirection: 'column', alignItems: 'center', background: bg, border: `1px solid ${border}`, borderRadius: '10px', padding: '6px 14px', minWidth: '80px', position: 'relative' } },
@@ -1630,7 +1727,7 @@ createElement('div', { style: { flex: 1 } },
             createElement('div', { style: { fontSize: '12px', color: '#475569', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '8px 10px', marginBottom: '12px', lineHeight: '1.5' } },
               'Circles are rated by bucket (pitch type + zone): ',
               createElement('b', { style: { color: '#15803d' } }, 'green'),
-              ' = batter hits 25%+ below his overall rate there (attack), ',
+              ' = the pitcher wins more often there than his average vs this batter (attack), ',
               createElement('b', { style: { color: '#b91c1c' } }, 'red'),
               ' = 25%+ above (avoid), gray = in between or under the minimum sample.'
             ),
@@ -1638,6 +1735,33 @@ createElement('div', { style: { flex: 1 } },
             createSlider('Pitch Circle Size (px)', 'pitchCircleSize', 28, 56, 1),
             // Buckets = pitch type × zone; buckets under this size are dropped
             createSlider('Min Pitches per Bucket', 'bucketMinPitches', 1, 20, 1),
+            // How small a difference from his baseline earns a colour. Shrinkage
+            // already handles thin samples, so this only trades gray for colour.
+            (() => {
+              const LABELS = { 1: 'Strict', 2: 'Firm', 3: 'Balanced', 4: 'Loose', 5: 'Very loose' };
+              const val = CURRENT_SETTINGS.ratingSensitivity || 3;
+              return createElement('div', { className: 'setting-item' },
+                createElement('label', { className: 'setting-label' }, 'Color Sensitivity'),
+                createElement('div', { className: 'setting-input-group' },
+                  createElement('input', {
+                    type: 'range', min: '1', max: '5', step: '1', value: String(val), className: 'setting-slider',
+                    oninput: (e) => {
+                      const v = parseInt(e.target.value, 10);
+                      CURRENT_SETTINGS.ratingSensitivity = v;
+                      e.target.parentElement.querySelector('.sensitivity-value').textContent = LABELS[v];
+                      this.updatePitchZone();
+                    },
+                    onchange: (e) => this.updateSetting('ratingSensitivity', parseInt(e.target.value, 10))
+                  }),
+                  createElement('span', {
+                    className: 'sensitivity-value setting-number-input',
+                    style: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px' }
+                  }, LABELS[val])
+                ),
+                createElement('div', { className: 'setting-hint' },
+                  'Lower = only strong differences get colored. Higher = more circles colored.')
+              );
+            })(),
             // Max circles drawn per bucket: 1..10, plus an "All" position (slider max = 11).
             (() => {
               const raw = CURRENT_SETTINGS.maxCirclesPerBucket;
@@ -1863,14 +1987,18 @@ createElement('div', { style: { flex: 1 } },
               createElement('div', { className: 'info-entry__content' },
                 createElement('div', { className: 'info-entry__title' }, 'Strike Zone'),
                 createElement('div', { className: 'info-entry__desc' },
-                  'Each circle is one pitch. Pitches are grouped into buckets by pitch type and zone (e.g. sliders in Low-In), and the circle\'s color rates its bucket: green = the batter\'s hit rate on that pitch type in that zone is 25%+ below his overall rate (attack here). Red = 25%+ above (avoid). Gray = near his average. The small L or R shows the pitcher\'s hand; the view is the pitcher\'s perspective.'
+                  'Each circle is one pitch, plotted where it crossed the plate. The bordered rectangle is the strike zone, split into the 9 boxes used for bucketing; circles outside it are pitches out of the zone. Pitches are grouped into buckets by pitch FAMILY and zone — Fastball, Breaking or Offspeed (e.g. breaking balls in Low-In) — and each bucket is scored on how often a pitch there went the PITCHER\'s way: a whiff, called strike, foul or out is a win; a hit or a ball is a loss. Green = he wins there more often than his average against this batter (attack). Red = less often (avoid). Gray = near his average. The small L or R shows the pitcher\'s hand; the view is the pitcher\'s perspective.'
                 ),
                 ...makeInfoExpand(
-                  createElement('p', {}, createElement('strong', {}, 'Green:'), ' Bucket hit rate (contact hits ÷ total pitches of that type in that zone) is 25% or more BELOW the batter\'s overall hits-per-pitch rate — good for the pitcher.'),
-                  createElement('p', {}, createElement('strong', {}, 'Red:'), ' Bucket hit rate is 25% or more ABOVE the batter\'s overall rate — bad for the pitcher.'),
-                  createElement('p', {}, createElement('strong', {}, 'Gray:'), ' Within ±25% of the batter\'s average.'),
+                  createElement('p', {}, createElement('strong', {}, 'Green:'), ' Pitches here go the pitcher\'s way more often than his average against this batter — attack.'),
+                  createElement('p', {}, createElement('strong', {}, 'Red:'), ' They go his way less often — avoid.'),
+                  createElement('p', {}, createElement('strong', {}, 'Gray:'), ' Near his average, or too small a sample to separate from it.'),
+                  createElement('p', {}, createElement('strong', {}, 'A ball counts against the pitcher. '), 'That matters most out of the zone, where two buckets can both show zero hits for completely different reasons — he chased and missed, or he simply took it. The first is a put-away pitch, the second is ball one. Scoring only hits could not tell them apart, and rated both "attack".'),
+                  createElement('p', {}, createElement('strong', {}, 'In-zone and out-of-zone are scored separately. '), 'About 84% of in-zone pitches go the pitcher\'s way against 27% out of it. Judged on one scale that 57-point gap would swamp everything, so a bucket is only ever compared against this batter\'s own rate in the same regime.'),
+                  createElement('p', {}, createElement('strong', {}, 'Small samples are pulled toward his average. '), 'A bucket of three pitches sits essentially on his baseline and stays gray no matter what happened in it; a bucket of a hundred speaks for itself. This is why a lone 2-for-3 no longer paints a zone red.'),
                   createElement('p', {}, 'Buckets with fewer pitches than the ', createElement('strong', {}, 'Min Pitches per Bucket'), ' setting are removed from the grid entirely — too small a sample to trust. Raise it for stricter evidence, lower it to see more pitches.'),
-                  createElement('p', {}, 'The Max Pitches Displayed slider reveals circles from the most extreme buckets (furthest above or below the batter\'s average) toward the average. Hover any circle for its bucket\'s full breakdown: pitch counts, hit rate, and the batter\'s overall rate. The settings panel filters by pitcher hand and pitch type — stats and colors recompute for the selected hand.')
+                  createElement('p', {}, 'The Max Pitches Displayed slider reveals circles from the most extreme buckets (furthest above or below the batter\'s average) toward the average. Hover any circle for its bucket\'s breakdown: which specific pitch types made it up, counts split by outcome, the raw pitcher-win tally, the sample-adjusted rate the colour is read from, and this batter\'s baseline for that regime. Out-of-zone buckets are labelled "Chase" and tagged Out of zone, and are kept separate from the 9 in-zone boxes so in-zone samples stay clean. The settings panel filters by pitcher hand and pitch type — stats and colors recompute for the selected hand.'),
+                  createElement('p', {}, createElement('strong', {}, 'Why families, not individual pitch types? '), 'Measured on a season of ALPB data, a batter\'s whiff rate varies about twice as much BETWEEN families as it does WITHIN one — a four-seam and a sinker play alike, a fastball and a slider do not. Splitting a zone by individual pitch type leaves only 6–10 swings per bucket, where a whiff rate carries a ±30-point margin; at that size the type-to-type differences could not be told apart from chance. Families roughly double the sample behind every circle. The per-type detail that IS reliable lives in ', createElement('strong', {}, 'How he handles each pitch'), ' below the zone, where each type is pooled across all zones and carries ~90 swings.')
                 ),
                 createElement('div', { className: 'pitch-badge-row' },
                   ...[
@@ -2018,6 +2146,8 @@ createElement('div', { style: { flex: 1 } },
         const frag = document.createDocumentFragment();
         frag.appendChild(pitchZoneEl);
         frag.appendChild(batterEl);
+        const arsenalEl = createArsenal(data);
+        if (arsenalEl) frag.appendChild(arsenalEl);
         frag.appendChild(this._tendenciesEl);
         return frag;
       })()
