@@ -21,6 +21,9 @@ const LOC = {
   midMid: [0.00, 2.50],
   lowIn: [0.60, 1.80],
   none: [null, null],
+  blank: ['', ''],           // falsy but NOT null — Number('') is a finite 0
+  blankish: ['   ', false],  // whitespace and a falsy non-string
+  strNums: ['0.50', '2.50'], // numeric strings are real readings → 'Mid-In'
 };
 
 /**
@@ -149,5 +152,33 @@ test('missing (not null) plate coordinates never fabricate a location', async ()
   await loadCard('ol-test-0006', buildPitches('ol-test-0006', finishes, INPLAY_FINISH), batter => {
     assert.strictEqual(batter.powerSequenceBreakdown.finishLocation, undefined);
     assert.strictEqual(batter.powerSequence, '4S → SL (16/16 = 100%)');
+  });
+});
+
+test('empty-string coordinates never fabricate a location', async () => {
+  // Number('') is a finite 0, so a `!= null` guard lets these through and
+  // getZoneFromLocation(0, 0) reports a confident 'Chase Low-Mid' built from no
+  // real reading at all — 16 of them would render as a 100%-share pattern.
+  const finishes = Array.from({ length: 16 }, () => 'blank');
+  await loadCard('ol-test-0007', buildPitches('ol-test-0007', finishes, INPLAY_FINISH), batter => {
+    assert.strictEqual(batter.powerSequenceBreakdown.finishLocation, undefined);
+    assert.strictEqual(batter.powerSequence, '4S → SL (16/16 = 100%)');
+  });
+});
+
+test('whitespace and falsy non-null coordinates never fabricate a location', async () => {
+  const finishes = Array.from({ length: 16 }, () => 'blankish');
+  await loadCard('ol-test-0008', buildPitches('ol-test-0008', finishes, INPLAY_FINISH), batter => {
+    assert.strictEqual(batter.powerSequenceBreakdown.finishLocation, undefined);
+  });
+});
+
+test('numeric-string coordinates ARE real readings and still locate', async () => {
+  // Pins the coercion helper's string branch: tightening it to `typeof === 'number'`
+  // would silently kill the whole feature if the feed ever emits numeric strings.
+  const finishes = Array.from({ length: 16 }, () => 'strNums');
+  await loadCard('ol-test-0009', buildPitches('ol-test-0009', finishes, INPLAY_FINISH), batter => {
+    assert.deepStrictEqual(batter.powerSequenceBreakdown.finishLocation,
+      { pitch: 'SL', band: 'Mid-In', count: 16, total: 16, chase: 0, dominant: true });
   });
 });

@@ -78,10 +78,32 @@ test('the share gate bites even when the count gate passes', () => {
 });
 
 test('6 of 17 (35.3%) is dominant', () => {
-  const pool = [...outs('Low-Out', 6), ...outs('High-In', 5), ...outs('Mid-Mid', 6)];
+  // The rest is split so Low-Out is the UNIQUE top — this case is about the share
+  // gate, not tie-breaking, which the next test covers.
+  const pool = [...outs('Low-Out', 6), ...outs('High-In', 5), ...outs('Mid-Mid', 3), ...outs('Low-In', 3)];
   const result = outPitchFinishLocation(pool, 'SL');
+  assert.strictEqual(result.total, 17);
   assert.strictEqual(result.band, 'Low-Out');
   assert.strictEqual(result.dominant, true);
+});
+
+test('a tied top band is never dominant, however good its share', () => {
+  // Two bands level at 6 of 16 (37.5% each) — both clear the count and share gates
+  // individually, but which one is reported is decided purely by pool insertion
+  // order. Telling a coach to pitch one corner on a coin flip is worse than saying
+  // nothing, so a tie is "no dominant spot" by definition.
+  const pool = [...outs('Low-Out', 6), ...outs('High-In', 6), ...outs('Mid-Mid', 4)];
+  const result = outPitchFinishLocation(pool, 'SL');
+  assert.strictEqual(result.total, 16);
+  assert.strictEqual(result.count, 6);
+  assert.strictEqual(result.dominant, false);
+
+  // Reversing the pool must not change the verdict (it would change `band`).
+  assert.strictEqual(outPitchFinishLocation([...pool].reverse(), 'SL').dominant, false);
+
+  // Shape contract: exactly the six fields the client and the wire depend on.
+  assert.deepStrictEqual(Object.keys(result).sort(),
+    ['band', 'chase', 'count', 'dominant', 'pitch', 'total']);
 });
 
 test('unlocated finishes leave both the pool and the denominator', () => {

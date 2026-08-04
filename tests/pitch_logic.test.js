@@ -1,7 +1,47 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert');
-const { computeBucketRatings, getVisiblePitches, bucketKey } = require('../pitch_logic.js');
+const {
+  computeBucketRatings, getVisiblePitches, bucketKey,
+  bandMissDescription, getZoneFromLocation,
+} = require('../pitch_logic.js');
+
+const { finishBand } = require('../lib/stats.js');
+
+test('bandMissDescription names the miss direction implied by the band', () => {
+  // Outer/inner thirds: the pitch really was off the plate.
+  for (const band of ['High-In', 'High-Out', 'Mid-In', 'Mid-Out', 'Low-In', 'Low-Out']) {
+    assert.strictEqual(bandMissDescription(band), 'off plate', band);
+  }
+  // Middle column: |plate_loc_side| was inside the zone's half-width, so the pitch
+  // was OVER the plate and missed vertically. Calling these "off plate" inverts the
+  // coaching instruction.
+  assert.strictEqual(bandMissDescription('High-Mid'), 'above the zone');
+  assert.strictEqual(bandMissDescription('Low-Mid'), 'below the zone');
+  // Unreachable for a chase pitch (both axes inside the edges = a strike), answered
+  // for totality only.
+  assert.strictEqual(bandMissDescription('Mid-Mid'), 'off plate');
+  for (const bad of [null, undefined, 42, '']) {
+    assert.strictEqual(bandMissDescription(bad), 'off plate');
+  }
+});
+
+test('a chase pitch over the plate is described as a vertical miss, not off plate', () => {
+  // This is the case that was wrong in production: dead centre horizontally, above
+  // the top of the zone.
+  const zone = getZoneFromLocation(0.0, 4.0, 'RHB');
+  assert.strictEqual(zone, 'Chase High-Mid');
+  assert.strictEqual(bandMissDescription(finishBand(zone)), 'above the zone');
+
+  const low = getZoneFromLocation(0.0, 0.9, 'RHB');
+  assert.strictEqual(low, 'Chase Low-Mid');
+  assert.strictEqual(bandMissDescription(finishBand(low)), 'below the zone');
+
+  // A genuinely off-plate chase still reads "off plate".
+  const away = getZoneFromLocation(-1.4, 1.8, 'RHB');
+  assert.strictEqual(away, 'Chase Mid-Out');
+  assert.strictEqual(bandMissDescription(finishBand(away)), 'off plate');
+});
 
 // Helper: build a pitchZone-shaped object.
 function pz(pitch, zone, outcome, pitcherThrows = 'R') {

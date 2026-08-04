@@ -548,19 +548,35 @@ function assessBuntThreat(batter) {
 }
 
 /**
+ * Coerces a raw plate coordinate, rejecting anything that isn't a real reading.
+ * The guard is load-bearing: getZoneFromLocation never fails, it just returns a
+ * label, so any junk that survives coercion becomes a confident fake location.
+ * A bare `!= null` check is not enough — Number('') and Number(false) are both a
+ * finite 0, which lands dead centre of the plate. The numeric-string branch stays
+ * deliberately: the feed emitting '0.5' must not silently kill the whole feature.
+ * @param {*} value - Raw plate_loc_side / plate_loc_height off the pitch record.
+ * @returns {number|null}
+ */
+function plateCoordinate(value) {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+/**
  * Zone label for the pitch that FINISHED a plate appearance, or null when the feed
- * carries no usable plate coordinates. The `== null` is load-bearing: a missing
- * field is undefined, and getZoneFromLocation(undefined, undefined) returns the
- * geometrically impossible 'Chase Mid-Mid' rather than failing.
+ * carries no usable plate coordinates.
  * @param {Object} pitch - The raw pitch record that ended the plate appearance.
  * @param {string} handedness - Batter handedness: 'LHB' or 'RHB'.
  * @returns {string|null}
  */
 function finishZoneOf(pitch, handedness) {
-  if (pitch.plate_loc_side == null || pitch.plate_loc_height == null) return null;
-  const side = Number(pitch.plate_loc_side);
-  const height = Number(pitch.plate_loc_height);
-  if (!Number.isFinite(side) || !Number.isFinite(height)) return null;
+  const side = plateCoordinate(pitch.plate_loc_side);
+  const height = plateCoordinate(pitch.plate_loc_height);
+  if (side === null || height === null) return null;
   return getZoneFromLocation(side, height, handedness);
 }
 
@@ -883,7 +899,12 @@ function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 9
             return { text, breakdown: buildBreakdown(topSeq, matchingOuts) };
           }
 
-          // Fallback: if no clear pattern, show most common individual pitch that gets outs
+          // Fallback: if no clear pattern, show most common individual pitch that gets outs.
+          // buildBreakdown gets a BARE token here rather than an 'A → B' sequence, which
+          // finishingToken handles correctly (it returns the token itself). The finish
+          // caption can never appear on this branch anyway: the fallback only fires when
+          // every shortSequence has count 1, and getPitchAbbreviation emits 10 distinct
+          // tokens, so the finish pool caps at 10 — below FINISH_MIN_SAMPLE.
           const finalPitches = {};
           outSequences.forEach(out => {
             const lastPitch = out.shortSequence.split(' → ').pop();

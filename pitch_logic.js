@@ -282,6 +282,27 @@ function isChaseZone(zone) {
   return typeof zone === 'string' && zone.startsWith(CHASE_PREFIX);
 }
 
+/**
+ * How a chase pitch in a given band missed the strike zone, in coach's language.
+ *
+ * A 'Mid' horizontal component on an out-of-zone pitch means |plate_loc_side| was
+ * within HALF_WIDTH — the pitch was OVER the plate and missed vertically. Calling
+ * that "off plate" inverts the instruction: it tells a pitcher to work away from a
+ * hitter who is actually chasing above or below the zone.
+ * @param {string} band - A folded (non-'Chase ') band label, e.g. 'Low-Mid'.
+ * @returns {string} Phrase describing the miss.
+ */
+function bandMissDescription(band) {
+  if (typeof band !== 'string') return 'off plate';
+  const [vertical, horizontal] = band.split('-');
+  if (horizontal !== 'Mid') return 'off plate';
+  if (vertical === 'High') return 'above the zone';
+  if (vertical === 'Low') return 'below the zone';
+  // 'Mid-Mid' is geometrically unreachable for a chase pitch (both axes inside the
+  // zone edges means it was a strike); answered only for totality.
+  return 'off plate';
+}
+
 // Logic-relevant subset of app.js DEFAULT_SETTINGS. Only used as a fallback when
 // neither an explicit settings arg nor the app.js CURRENT_SETTINGS global exists
 // (i.e. under node:test). Keep the shared keys in sync with DEFAULT_SETTINGS.
@@ -656,6 +677,7 @@ if (typeof module !== 'undefined' && module.exports) {
     plateToPercent,
     getZoneFromLocation,
     isChaseZone,
+    bandMissDescription,
     resolveSettings,
     bucketKey,
     interleave,
