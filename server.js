@@ -98,18 +98,45 @@ const TEAM_DISPLAY_NAMES = {
   'HAG_FLY': 'Hagerstown Flying Boxcars'
 };
 
+// Retry only what a retry can fix: transport failures and upstream 5xx. A 4xx is a
+// malformed request and fails identically on every attempt.
+function isRetryableUpstream(err) {
+  if (!err) return false;
+  if (err.response) return err.response.status >= 500;
+  return true; // no response at all: network error / ECONNABORTED / ETIMEDOUT
+}
+
+const UPSTREAM_TIMEOUT_MS = 25000;
+const UPSTREAM_RETRY_DELAYS_MS = [500, 1500];
+
 /**
  * Makes an authenticated GET request to the SLUGGER API.
+ *
+ * axios defaults to NO timeout, so before this a single hung page could silently
+ * consume the whole Lambda budget on any path — including the batter card the
+ * interactive flow depends on. 25s sits under the upstream API Gateway's 29s
+ * integration limit, and transport/5xx failures get a short bounded retry.
  * @param {string} endpoint - API path (e.g. '/pitches').
  * @param {Object} [params={}] - Query parameters to include. Defaults `limit` to 1000.
  * @returns {Promise<Object>} Parsed JSON response body.
  */
 async function sluggerRequest(endpoint, params = {}) {
-  const response = await axios.get(`${SLUGGER_CONFIG.baseUrl}${endpoint}`, {
-    headers: { 'x-api-key': SLUGGER_CONFIG.apiKey, 'Content-Type': 'application/json' },
-    params: { ...params, limit: params.limit || 1000 }
-  });
-  return response.data;
+  let lastError;
+  for (let attempt = 0; attempt <= UPSTREAM_RETRY_DELAYS_MS.length; attempt++) {
+    try {
+      const response = await axios.get(`${SLUGGER_CONFIG.baseUrl}${endpoint}`, {
+        headers: { 'x-api-key': SLUGGER_CONFIG.apiKey, 'Content-Type': 'application/json' },
+        params: { ...params, limit: params.limit || 1000 },
+        timeout: UPSTREAM_TIMEOUT_MS
+      });
+      return response.data;
+    } catch (err) {
+      lastError = err;
+      if (attempt === UPSTREAM_RETRY_DELAYS_MS.length || !isRetryableUpstream(err)) break;
+      await new Promise(resolve => setTimeout(resolve, UPSTREAM_RETRY_DELAYS_MS[attempt]));
+    }
+  }
+  throw lastError;
 }
 
 /**
@@ -300,6 +327,15 @@ function slimPitch(pitch) {
 // so the ceiling covers a full season comfortably.
 const MAX_CACHED_PITCHES = 200000;
 
+// An uncached range wider than this can't finish inside the Lambda's 240s timeout —
+// a season-scale request just burns the whole budget and returns a 502. Rather than
+// hang and fail, /api/teams/range clamps to the most recent window of this many days
+// and SAYS SO in the response metadata. Observed: 30d ≈ 42s, 75d ≈ 212s (88% of
+// budget). Env-overridable so a caller that needs more can ask without a code change.
+const MAX_UNCACHED_RANGE_DAYS = Number(process.env.MAX_UNCACHED_RANGE_DAYS || 60);
+
+const UPSTREAM_ERROR_MESSAGE = "Couldn't reach the league data feed. Please try again in a moment.";
+
 /**
  * Writes a pitch array to disk as JSON for subsequent streamed reads.
  * Writes to a .tmp file first and renames into place so a crash mid-write can
@@ -328,7 +364,8 @@ async function writeDiskCache(filePath, pitches) {
  * through stream-json without loading the full array into V8 heap simultaneously.
  * @param {string} startDateStr - Start date in YYYY-MM-DD format.
  * @param {string} endDateStr - End date in YYYY-MM-DD format.
- * @returns {Promise<Array>} Array of raw pitch objects, or empty array on error.
+ * @returns {Promise<Array>} Array of raw pitch objects. Empty means the range is
+ *   genuinely empty; an upstream failure throws.
  */
 async function fetchPitchesByDateRange(startDateStr, endDateStr) {
   const cachePath = getCachePath(startDateStr, endDateStr);
@@ -378,8 +415,10 @@ async function fetchPitchesByDateRange(startDateStr, endDateStr) {
     return filtered;
 
   } catch (error) {
+    // Rethrow: swallowing this used to surface an upstream outage to the coach as
+    // "no pitch data found", which is a different and much more misleading claim.
     console.error("❌ Error fetching from SLUGGER API:", error);
-    return [];
+    throw error;
   }
 }
 
@@ -393,7 +432,8 @@ async function fetchPitchesByDateRange(startDateStr, endDateStr) {
  * @param {string} batterId - SLUGGER player UUID to scope the query to.
  * @param {string} startDateStr - Start date (YYYY-MM-DD).
  * @param {string} endDateStr - End date (YYYY-MM-DD).
- * @returns {Promise<Array>} Slimmed pitch records for that batter, or [] on error.
+ * @returns {Promise<Array>} Slimmed pitch records for that batter. Empty means the
+ *   batter genuinely has no pitches in the window; an upstream failure throws.
  */
 async function fetchPitchesForBatter(batterId, startDateStr, endDateStr) {
   const cachePath = path.join(CACHE_DIR, `cache_batter_${batterId}_${startDateStr}_${endDateStr}.json`);
@@ -434,8 +474,10 @@ async function fetchPitchesForBatter(batterId, startDateStr, endDateStr) {
 
     return filtered;
   } catch (error) {
+    // Rethrow — see fetchPitchesByDateRange. An empty array must mean "this batter
+    // genuinely has no pitches", never "the feed was unreachable".
     console.error(`❌ Error fetching batter ${batterId} pitches:`, error.message);
-    return [];
+    throw error;
   }
 }
 
@@ -1107,7 +1149,7 @@ const teamsRangeHandler = async (req, res) => {
     const parsedEnd = parseDateInput(endDate);
     const seasonDefaults = getSeasonDefaults();
 
-    const finalStartDate = parsedStart || seasonDefaults.start;
+    let finalStartDate = parsedStart || seasonDefaults.start;
     const finalEndDate = parsedEnd || seasonDefaults.end;
 
     if (new Date(`${finalStartDate}T00:00:00Z`) > new Date(`${finalEndDate}T00:00:00Z`)) {
@@ -1125,10 +1167,34 @@ const teamsRangeHandler = async (req, res) => {
       });
     }
 
+    // Clamp an uncached over-budget range to the most recent window rather than
+    // spending 240s to return a 502. The END is kept — recent form is what a coach
+    // is asking about — and the clamp is disclosed in metadata below. A cached
+    // superset is served in full: reading it from disk costs seconds, not minutes.
+    const requestedStartDate = finalStartDate;
+    let clampNotice = null;
+    if (spanDays(finalStartDate, finalEndDate) > MAX_UNCACHED_RANGE_DAYS &&
+        !fs.existsSync(getCachePath(finalStartDate, finalEndDate))) {
+      const clampedStart = new Date(`${finalEndDate}T00:00:00Z`);
+      clampedStart.setUTCDate(clampedStart.getUTCDate() - MAX_UNCACHED_RANGE_DAYS);
+      finalStartDate = clampedStart.toISOString().slice(0, 10);
+      clampNotice = `Requested ${requestedStartDate} through ${finalEndDate} ` +
+        `(${spanDays(requestedStartDate, finalEndDate)} days). Served the most recent ` +
+        `${MAX_UNCACHED_RANGE_DAYS} days (${finalStartDate} through ${finalEndDate}) — ` +
+        `wider uncached ranges exceed the request budget.`;
+      console.log(`⚠️ Range clamped: ${requestedStartDate} → ${finalStartDate} (end ${finalEndDate})`);
+    }
+
     console.log(`\nFetching date range: ${finalStartDate} to ${finalEndDate}`);
 
     // fetch pitches
-    let pitches = await fetchPitchesByDateRange(finalStartDate, finalEndDate);
+    let pitches;
+    try {
+      pitches = await fetchPitchesByDateRange(finalStartDate, finalEndDate);
+    } catch (err) {
+      console.error('Upstream fetch failed for range:', err.message);
+      return res.status(503).json({ error: 'upstream_error', message: UPSTREAM_ERROR_MESSAGE });
+    }
 
     if (!pitches || pitches.length === 0) {
       return res.status(404).json({
@@ -1186,10 +1252,19 @@ const teamsRangeHandler = async (req, res) => {
         endDate: finalEndDate,
         filesProcessed: pitches.length,
         pitchesFilteredByVelocity: countPitchesByVelocity(pitches, parsedMaxVelocity),
-        pzLegend: wire.pzLegend
+        pzLegend: wire.pzLegend,
+        // Only present when the window served is narrower than the one asked for.
+        // The client must show `notice` — a coach seeing less data than they
+        // requested has to be told, never left to assume it's the full range.
+        ...(clampNotice ? {
+          requestedStartDate,
+          clampedTo: MAX_UNCACHED_RANGE_DAYS,
+          partial: true,
+          notice: clampNotice
+        } : {})
       }
     });
-    
+
   } catch (error) {
     console.error('Error:', error.message);
     res.status(500).json({ error: 'Failed to fetch data', details: error.message });
@@ -1568,9 +1643,16 @@ const batterCardHandler = async (req, res) => {
 
     // Scoped fetch — one query per id, merged. Never touches the full pitch space.
     let pitches = [];
-    for (const id of ids) {
-      const part = await fetchPitchesForBatter(id, finalStartDate, finalEndDate);
-      if (part && part.length) pitches.push(...part);
+    try {
+      for (const id of ids) {
+        const part = await fetchPitchesForBatter(id, finalStartDate, finalEndDate);
+        if (part && part.length) pitches.push(...part);
+      }
+    } catch (err) {
+      // Distinct from the empty case below: the feed was unreachable, so we do not
+      // know whether this batter has data. Saying "no data found" would be a lie.
+      console.error('Upstream fetch failed for batter card:', err.message);
+      return res.status(503).json({ error: 'upstream_error', message: UPSTREAM_ERROR_MESSAGE });
     }
 
     if (pitches.length === 0) {

@@ -1493,6 +1493,16 @@ createElement('div', { style: { flex: 1 } },
         ),
         createElement('button', { className: 'back-btn', onclick: () => this.showDateSelect() }, '← Change Dates')
       ),
+      // The server narrows an over-budget uncached range and reports it here. This
+      // banner is the whole reason that clamp is acceptable: a coach must never be
+      // shown a shorter window than they asked for without being told.
+      METADATA && METADATA.notice ? createElement('div', {
+        style: {
+          margin: '0 auto 16px', maxWidth: '640px', padding: '10px 14px',
+          background: '#fef3c7', border: '1px solid #fcd34d', borderRadius: '6px',
+          color: '#78350f', fontSize: '13px', textAlign: 'center'
+        }
+      }, `⚠️ ${METADATA.notice}`) : null,
       createElement('div', { className: 'team-grid' }, ...teamButtons)
     );
   }
