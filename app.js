@@ -573,6 +573,25 @@ const stripPercents = (text) => {
             createElement('span', { className: 'out-breakdown-item out-breakdown-contact', title: 'Contact out (ball in play)' }, `Contact ${powerSequenceBreakdown.contactOut}`)
           )
         : null,
+      // Own element, never routed through cleanedPowerSequence — stripPercents
+      // rewrites "(n/m = p%)" and would merge the two denominators.
+      powerSequenceBreakdown && powerSequenceBreakdown.finishLocation &&
+      typeof powerSequenceBreakdown.finishLocation.band === 'string' &&
+      Number.isFinite(powerSequenceBreakdown.finishLocation.total) &&
+      powerSequenceBreakdown.finishLocation.total > 0
+        ? (() => {
+            const loc = powerSequenceBreakdown.finishLocation;
+            return createElement('div', {
+              className: 'out-location',
+              style: { fontSize: '11px', color: '#94a3b8', marginTop: '4px', textAlign: 'center' },
+              title: loc.dominant
+                ? `${loc.count} of ${loc.total} located ${loc.pitch} out-pitch finishes were in the ${loc.band} band — ${loc.chase} off the plate, ${loc.count - loc.chase} in the zone. Bands merge a strike-zone box with the chase area just outside it.`
+                : `${loc.total} located ${loc.pitch} out-pitch finishes, spread out — the most common band was ${loc.band} with ${loc.count}, short of the 6-and-35% needed to call it a pattern.`
+            }, loc.dominant
+              ? `${loc.pitch} finishes: ${loc.band} (${loc.count} of ${loc.total}${loc.chase ? `, ${loc.chase} off plate` : ''})`
+              : `${loc.pitch} finishes: no dominant spot (${loc.total} tracked)`);
+          })()
+        : null,
     ),
     createElement('div', { className: 'power-sequence threat-box' },
       createElement('h4', { style: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' } },
@@ -2066,6 +2085,7 @@ createElement('div', { style: { flex: 1 } },
                     createElement('strong', {}, 'K👁'), ' = strikeout looking (called strike 3). ',
                     createElement('strong', {}, 'Contact'), ' = ball put in play for an out.'
                   ),
+                  createElement('p', {}, 'When enough of this batter’s outs finish on the same pitch with tracked coordinates, a location line appears under the breakdown — e.g. ', createElement('strong', {}, 'SL finishes: Low-Out (6 of 15, 4 off plate)'), '. It pools every out that ENDED on that pitch type (not just the two-pitch sequence above, so the two denominators differ on purpose) and needs at least 15 located finishes, 6 of them in one band, and that band holding 35% or more. A “band” merges a strike-zone box with the chase area just outside it, so a low-away strike and a buried slider count as the same spot; “off plate” then says how many of those were outside the zone — 4 of 6 means he is chasing it, not being beaten in the zone. With 15+ finishes but no band that dominant it reads “no dominant spot”, which is itself useful — location is not the lever for this hitter. Below 15 located finishes nothing is shown, because at that size a location pattern is indistinguishable from random spread. Only the OUT pitch is located; the setup pitch is not.'),
                   createElement('p', { style: { color: '#64748b' } }, 'More outs in the sample = more reliable signal. Low-data batters may show "Insufficient data."')
                 )
               )

@@ -8,6 +8,7 @@ const path = require('path');
 const { withParserAsStream } = require('stream-json/streamers/stream-array.js');
 const {
   isZeroZeroPitch, classifyZeroZeroCall, firstPitchMetric, firstPitchLabel, poolLeagueFirstPitch,
+  outPitchFinishLocation, finishingToken,
 } = require('./lib/stats.js');
 const { buildCanonicalNameMap, dedupeBatters } = require('./lib/players.js');
 // Strike zone geometry is shared with the browser client (pitch_logic.js is also
@@ -547,6 +548,23 @@ function assessBuntThreat(batter) {
 }
 
 /**
+ * Zone label for the pitch that FINISHED a plate appearance, or null when the feed
+ * carries no usable plate coordinates. The `== null` is load-bearing: a missing
+ * field is undefined, and getZoneFromLocation(undefined, undefined) returns the
+ * geometrically impossible 'Chase Mid-Mid' rather than failing.
+ * @param {Object} pitch - The raw pitch record that ended the plate appearance.
+ * @param {string} handedness - Batter handedness: 'LHB' or 'RHB'.
+ * @returns {string|null}
+ */
+function finishZoneOf(pitch, handedness) {
+  if (pitch.plate_loc_side == null || pitch.plate_loc_height == null) return null;
+  const side = Number(pitch.plate_loc_side);
+  const height = Number(pitch.plate_loc_height);
+  if (!Number.isFinite(side) || !Number.isFinite(height)) return null;
+  return getZoneFromLocation(side, height, handedness);
+}
+
+/**
  * Transforms a flat array of raw pitch records into a structured teams → batters data object.
  * Computes per-batter stats, zone analysis, pitch sequences, and tendency labels.
  * @param {Array} pitchData - Raw pitch records from the SLUGGER API.
@@ -650,7 +668,8 @@ function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 9
           shortSequence: shortSeq,
           outType: pitch.k_or_bb === 'Strikeout' ? 'K' : pitch.play_result,
           wasSwinging: pitch.pitch_call === 'StrikeSwinging',
-          pitchCount: currentPA.pitches.length
+          pitchCount: currentPA.pitches.length,
+          zone: finishZoneOf(pitch, batterData.handedness)
         });
       }
 
@@ -676,7 +695,8 @@ function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 9
         shortSequence: shortSeq,
         outType: 'K',
         wasSwinging: pitch.pitch_call === 'StrikeSwinging',
-        pitchCount: currentPA.pitches.length
+        pitchCount: currentPA.pitches.length,
+        zone: finishZoneOf(pitch, batterData.handedness)
       });
     }
 
@@ -833,6 +853,13 @@ function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 9
                 bd.contactOut++;
               }
             });
+            // Modal finish location of the out pitch, hung on the object that is
+            // already on the wire so RESPONSE_FIELDS and the client signature stay
+            // untouched. Pooled over every out FINISHING on that pitch type, not
+            // just the outs matching the two-pitch headline. Assigned only when
+            // non-null so sub-sample batters add no payload.
+            const finishLocation = outPitchFinishLocation(outSequences, finishingToken(topSeq));
+            if (finishLocation) bd.finishLocation = finishLocation;
             return bd;
           }
 
