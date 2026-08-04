@@ -1110,6 +1110,94 @@ function getLeagueFirstPitchAvg() {
   return null;
 }
 
+// The baseline used to be a by-product of the full-season /api/teams/range transform,
+// which no longer completes inside the Lambda budget — so every card silently read
+// "league avg pending" and every batter graded Neutral. It never needed the whole
+// pitch space: the metric is defined over 0-0 pitches only, and the upstream honours
+// a balls=0&strikes=0 filter, so this pulls ~34k records instead of ~151k. Measured
+// season-to-date: 35 pages, ~45s. poolLeagueFirstPitch re-filters with isZeroZeroPitch
+// internally, so the pre-filtered pull is mathematically identical to the full pool.
+const LEAGUE_FP_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+let leagueFpInFlight = null;
+
+function leagueFirstPitchIsFresh(start, end) {
+  const memo = leagueFirstPitchMemo;
+  if (!memo || memo.metric == null) return false;
+  if (memo.start !== start || memo.end !== end) return false;
+  return Date.now() - new Date(memo.computedAt).getTime() < LEAGUE_FP_MAX_AGE_MS;
+}
+
+/**
+ * Recomputes the league first-pitch baseline from a 0-0-only upstream fetch and
+ * records it. Single-flight: concurrent callers share one fetch.
+ * @param {string} start - Window start (YYYY-MM-DD).
+ * @param {string} end - Window end (YYYY-MM-DD).
+ * @returns {Promise<number|null>} The pooled metric, or null when the window is empty.
+ */
+async function refreshLeagueFirstPitch(start, end) {
+  if (leagueFpInFlight) return leagueFpInFlight;
+  leagueFpInFlight = (async () => {
+    console.log(`Refreshing league first-pitch baseline: ${start} → ${end} (0-0 pitches only)`);
+    const records = await fetchAllPages('/pitches', {
+      date_range_start: start,
+      date_range_end: end,
+      balls: 0,
+      strikes: 0
+    }, (items) => items
+      .filter(p => {
+        const d = (p.date || '').slice(0, 10);
+        return d >= start && d <= end;
+      })
+      .map(slimPitch)
+    );
+    const pool = poolLeagueFirstPitch(records);
+    recordLeagueFirstPitch(start, end, pool);
+    console.log(`✅ League first-pitch baseline: ${pool.metric} from ${records.length} 0-0 pitches`);
+    return pool.metric;
+  })();
+  try {
+    return await leagueFpInFlight;
+  } finally {
+    leagueFpInFlight = null;
+  }
+}
+
+/**
+ * GET /api/league-baseline
+ * Computes (or returns the cached) season-to-date league first-pitch metric that
+ * every batter card grades against. Awaited rather than fired-and-forgotten:
+ * Lambda freezes the execution environment after the response, so a detached
+ * background fetch would stall mid-flight.
+ * @returns {Object} { metric, start, end, computedAt, refreshed }
+ */
+const leagueBaselineHandler = async (req, res) => {
+  try {
+    const range = resolveDateRange(null, null);
+    if (range.error) {
+      return res.status(range.status).json({ error: range.error, message: range.message });
+    }
+    const { finalStartDate, finalEndDate } = range;
+
+    let refreshed = false;
+    if (!leagueFirstPitchIsFresh(finalStartDate, finalEndDate)) {
+      await refreshLeagueFirstPitch(finalStartDate, finalEndDate);
+      refreshed = true;
+    }
+
+    const memo = leagueFirstPitchMemo;
+    res.json({
+      metric: memo ? memo.metric : null,
+      start: memo ? memo.start : finalStartDate,
+      end: memo ? memo.end : finalEndDate,
+      computedAt: memo ? memo.computedAt : null,
+      refreshed
+    });
+  } catch (error) {
+    console.error('League baseline refresh failed:', error.message);
+    res.status(503).json({ error: 'upstream_error', message: UPSTREAM_ERROR_MESSAGE });
+  }
+};
+
 /**
  * GET /api/teams/range
  * Returns batter scouting data for a given date range.
@@ -1711,6 +1799,7 @@ const apiHealthHandler = (req, res) => {
 app.get('/api/batters', battersHandler);
 app.get('/api/batter/card', batterCardHandler);
 app.get('/api/teams/range', teamsRangeHandler);
+app.get('/api/league-baseline', leagueBaselineHandler);
 app.get('/api/health', apiHealthHandler);
 
 // Also register API routes at BASE_PATH for ALB routing
@@ -1718,6 +1807,7 @@ if (BASE_PATH) {
   app.get(`${BASE_PATH}/api/batters`, battersHandler);
   app.get(`${BASE_PATH}/api/batter/card`, batterCardHandler);
   app.get(`${BASE_PATH}/api/teams/range`, teamsRangeHandler);
+  app.get(`${BASE_PATH}/api/league-baseline`, leagueBaselineHandler);
   app.get(`${BASE_PATH}/api/health`, apiHealthHandler);
 }
 
@@ -1753,9 +1843,11 @@ if (process.env.VERCEL) {
 module.exports = app;
 
 // Test seam: when required as a module (never as the production entrypoint), expose
-// the in-memory lookup cache so the unit suite can seed players without a network call.
+// the in-memory lookup cache so the unit suite can seed players without a network call,
+// and a way to drop the league first-pitch memo so a test can model a cold container.
 if (require.main !== module) {
   app.__lookupCache = lookupCache;
+  app.__resetLeagueFirstPitch = () => { leagueFirstPitchMemo = null; };
 }
 
 if (require.main === module) {

@@ -39,6 +39,16 @@ function get(port, p) {
 
 test('tendencies.firstStrike keeps the "Label (NN%)" shape', async () => {
   fs.mkdirSync(CACHE_DIR, { recursive: true });
+  // This test asserts the COLD-container reading (firstStrikePending === true), but
+  // getLeagueFirstPitchAvg falls back to scanning CACHE_DIR for any league_fp_*.json.
+  // /tmp/cache is shared with anything else that has run on this machine — including
+  // the /api/league-baseline endpoint, which writes exactly those files — so clear
+  // them or this passes/fails depending on run order.
+  for (const f of fs.readdirSync(CACHE_DIR)) {
+    if (f.startsWith('league_fp_') && f.endsWith('.json')) {
+      try { fs.unlinkSync(path.join(CACHE_DIR, f)); } catch (_) { /* best effort */ }
+    }
+  }
   // Three 0-0 pitches (2 swings, 1 take) + a non-0-0 pitch that must be ignored.
   fs.writeFileSync(SEED_FILE, JSON.stringify([
     mkPitch('InPlay', 0, 0),

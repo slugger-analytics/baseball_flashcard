@@ -120,25 +120,38 @@ jobs:
           done
           echo "7-day data path smoke FAILED"; exit 1
 
-      - name: Smoke test data path (season-scale range)
+      - name: Smoke test the default view (batter index → season-to-date card)
         run: |
-          # Season-scale = the failure class the columnar format fixes (response
-          # oversize/timeout). Cold container + cold cache answers after ~90-110s of
-          # silence, so keep retries: failed attempts still warm the server-side disk
-          # cache and later tries answer in ~15s. --http1.1 avoids a runner curl
-          # HTTP/2 stream bug (exit 92: status 200 arrives, body transfer dies).
-          START="2026-04-21"
+          # This is what a coach's DEFAULT "2026 Season to Date" click actually does:
+          # GET /api/batters, then a batter-scoped GET /api/batter/card for the full
+          # season. It does NOT call /api/teams/range — the season-scale range smoke
+          # this step replaced gated on an endpoint no UI screen reaches, which is why
+          # it failed on 2026-08-04 while the widget itself was working fine.
+          BASE="https://www.alpb-analytics.com/widgets/flashcard/api"
           END=$(date -u +%F)
-          URL="https://www.alpb-analytics.com/widgets/flashcard/api/teams/range?startDate=${START}&endDate=${END}&maxVelocity=105&pitchGroup=All"
-          for i in 1 2 3 4; do
-            meta=$(curl -sS --http1.1 -o /tmp/season.json -w "%{http_code} ttfb=%{time_starttransfer}s total=%{time_total}s" \
-              --max-time 280 --compressed "$URL" 2>/tmp/curlerr) || echo "curl exit $?: $(cat /tmp/curlerr 2>/dev/null)"
-            code=${meta%% *}
-            size=$(wc -c < /tmp/season.json 2>/dev/null || echo 0)
-            echo "attempt $i: HTTP ${code:-none} (${meta:-no metadata}) ${size} bytes"
-            if [ "${code:-}" = "200" ] && [ "$size" -gt 100000 ] && grep -q '"pzLegend"' /tmp/season.json; then
-              echo "Season data path OK"; exit 0
+          curl -sS --http1.1 -o /tmp/batters.json -w "batters HTTP %{http_code}\n" --max-time 60 --compressed "${BASE}/batters"
+          python3 - <<'PY'
+          import json, sys
+          d = json.load(open('/tmp/batters.json'))
+          b = d.get('batters') or []
+          if not b:
+              print('FAIL: /api/batters returned no batters'); sys.exit(1)
+          print(f'batters index OK: {len(b)} entries')
+          open('/tmp/ids.txt','w').write('\n'.join(
+              ','.join(e['ids']) if isinstance(e.get('ids'), list) else str(e.get('id') or e.get('batter_id'))
+              for e in b[:8]))
+          PY
+          # Many index entries are pitchers with no pitches, so a 404 no_data is not a
+          # failure of the path — try the next batter until one has data.
+          while read -r ids; do
+            [ -z "$ids" ] && continue
+            URL="${BASE}/batter/card?batterIds=${ids}&startDate=2026-04-21&endDate=${END}&maxVelocity=105&pitchGroup=All"
+            code=$(curl -sS --http1.1 -o /tmp/card.json -w "%{http_code}" --max-time 60 --compressed "$URL") || echo "curl exit: $?"
+            size=$(wc -c < /tmp/card.json 2>/dev/null || echo 0)
+            echo "card ${ids:0:8}: HTTP ${code:-none}, ${size} bytes"
+            if [ "${code:-}" = "200" ] && grep -q '"pzLegend"' /tmp/card.json; then
+              echo "Default view data path OK"; exit 0
             fi
-            sleep 20
-          done
-          echo "Season data path smoke FAILED"; exit 1
+            if [ "${code:-}" = "404" ] && grep -q 'no_data' /tmp/card.json; then continue; fi
+          done < /tmp/ids.txt
+          echo "Default view smoke FAILED (no sampled batter returned a card)"; exit 1

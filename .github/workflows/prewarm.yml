@@ -1,10 +1,15 @@
 name: Flashcard Cache Prewarm
 
-# Keeps the widget's per-container disk cache warm for the default
-# season-to-date range so a coach's load answers in ~15s instead of the
-# ~90-110s a cold fetch takes. Each hit warms whichever Lambda container the
-# ALB routes to. Best-effort: failures don't page anyone — the request itself
-# repopulates the cache when the service is healthy again.
+# Warms whichever Lambda container the ALB routes to, and — more importantly —
+# computes the league first-pitch baseline every card grades against. That baseline
+# lives in per-container /tmp, so a fresh container reads "league avg pending" until
+# something populates it.
+#
+# This used to request the season-scale /api/teams/range, which cannot finish inside
+# the Lambda's 240s timeout: it burned a full 240s invocation every 30 minutes,
+# never wrote the cache the comment claimed it warmed, and contended with live coach
+# traffic for the same throughput-limited upstream. /api/league-baseline does the job
+# in ~45s by fetching 0-0 pitches only. Best-effort: failures don't page anyone.
 
 on:
   schedule:
@@ -17,10 +22,14 @@ jobs:
   prewarm:
     runs-on: ubuntu-latest
     steps:
-      - name: Warm season-to-date range
+      - name: Warm league first-pitch baseline
         run: |
-          START="2026-04-21"
-          END=$(date -u +%F)
-          URL="https://www.alpb-analytics.com/widgets/flashcard/api/teams/range?startDate=${START}&endDate=${END}&maxVelocity=105&pitchGroup=All"
-          code=$(curl -s --http1.1 -o /dev/null -w "%{http_code} ttfb=%{time_starttransfer}s" --max-time 280 --compressed "$URL") || true
-          echo "prewarm: ${code:-request failed}"
+          BASE="https://www.alpb-analytics.com/widgets/flashcard/api"
+          out=$(curl -s --http1.1 -o /tmp/baseline.json -w "%{http_code} total=%{time_total}s" --max-time 120 --compressed "${BASE}/league-baseline") || true
+          echo "league-baseline: ${out:-request failed} $(cat /tmp/baseline.json 2>/dev/null | head -c 200)"
+
+      - name: Warm batter index
+        run: |
+          BASE="https://www.alpb-analytics.com/widgets/flashcard/api"
+          out=$(curl -s --http1.1 -o /dev/null -w "%{http_code} total=%{time_total}s" --max-time 120 --compressed "${BASE}/batters") || true
+          echo "batters: ${out:-request failed}"
