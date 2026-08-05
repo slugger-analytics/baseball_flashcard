@@ -3,6 +3,14 @@ let METADATA = null;
 // Distinct-batter index for the batter-first flow, from GET /api/batters (cheap,
 // no pitch-space scan). Array of { name, ids:[...], team, bats }, sorted by name.
 let BATTERS_INDEX = [];
+// Current club rosters from iScore, joined to SLUGGER ids server-side (GET
+// /api/rosters). Array of { guid, name, batters:[{name, ids, bats, number,
+// position}] }. This is the reliable team source — SLUGGER's own team_name is
+// missing for 132 of 564 batters and cannot express a mid-season trade. Empty
+// when iScore is unreachable, in which case the picker falls back to the flat
+// index and simply offers no team filter.
+let ROSTERS = [];
+let ROSTER_UNMATCHED = [];
 let cachedSeasonData = null;
 let cachedDateRange = { start: null, end: null, maxVelocity: null, pitchGroup: null };
 // Default settings
@@ -130,6 +138,61 @@ function createElement(tag, props = {}, ...children) {
 // strike zone geometry (STRIKE_ZONE, ZONE_PCT, plateToPercent, getZoneFromLocation)
 // now live in pitch_logic.js (loaded before app.js) so they can be unit-tested
 // under node:test and shared with the server. app.js calls them as globals.
+
+/** Accent- and punctuation-insensitive form for search comparisons. */
+function searchNorm(value) {
+  return String(value || '')
+    .normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Ranks batters against a search query, best first.
+ *
+ * SLUGGER stores names "Last, First", so a plain substring test — what the picker
+ * used to do — fails on the way people actually type. "osvaldo abreu" matched
+ * nothing at all; only "abreu" or "abreu, os" worked. Every batter is therefore
+ * indexed under both orders, plus surname and forename alone, the club, and the
+ * jersey number.
+ *
+ * Rank is by where the query lands, not merely whether it appears: a surname
+ * starting with the query beats a mid-word hit somewhere else. Ties fall back to
+ * alphabetical so ordering is stable as the user types.
+ *
+ * @param {Array<Object>} pool - Batter rows to search.
+ * @param {string} query
+ * @returns {Array<Object>} Matching rows, ranked.
+ */
+function matchBatters(pool, query) {
+  const q = searchNorm(query);
+  if (!q) return [...pool].sort((a, b) => a.name.localeCompare(b.name));
+
+  const scored = [];
+  for (const b of pool) {
+    const full = searchNorm(b.name);                    // "abreu osvaldo"
+    const comma = String(b.name).includes(',');
+    const last = comma ? searchNorm(String(b.name).split(',')[0]) : full;
+    const first = comma ? searchNorm(String(b.name).split(',').slice(1).join(' ')) : '';
+    const reversed = first ? `${first} ${last}` : full; // "osvaldo abreu"
+    const team = searchNorm(b.team);
+    const number = String(b.number || '');
+
+    let rank = -1;
+    if (number && number === query.trim()) rank = 0;
+    else if (last.startsWith(q)) rank = 1;
+    else if (reversed.startsWith(q)) rank = 2;
+    else if (first && first.startsWith(q)) rank = 3;
+    // A query landing at the start of any word — catches "bonta" in "Del Bonta-Smith".
+    else if (` ${reversed} `.includes(` ${q}`)) rank = 4;
+    else if (reversed.includes(q) || full.includes(q)) rank = 5;
+    else if (team.startsWith(q)) rank = 6;
+    else if (team.includes(q)) rank = 7;
+
+    if (rank >= 0) scored.push({ b, rank });
+  }
+  scored.sort((x, y) => x.rank - y.rank || x.b.name.localeCompare(y.b.name));
+  return scored.map(s => s.b);
+}
 
 /**
  * Builds the strike zone overlay: the zone rectangle plus the two interior lines
@@ -826,11 +889,33 @@ printCurrentCard() {
       BATTERS_INDEX = data.batters;
       this.currentScreen = 'batterSelect';
       this.render();
+      // Rosters are a progressive enhancement: the picker is already usable
+      // without them, so they load after first paint and never block it.
+      this.loadRosters();
     } catch (err) {
       console.error(err);
       this.error = `Could not load the batter list: ${err.message}`;
       this.currentScreen = 'error';
       this.render();
+    }
+  }
+
+  /**
+   * Loads iScore club rosters in the background and re-renders the picker with a
+   * team filter once they arrive. Failure is deliberately silent: the flat batter
+   * list still works, so a wobbly third-party API should not surface an error
+   * screen over a picker that is already on screen and usable.
+   */
+  async loadRosters() {
+    try {
+      const response = await fetch('./api/rosters');
+      const data = await response.json();
+      if (!response.ok || !Array.isArray(data.teams) || data.teams.length === 0) return;
+      ROSTERS = data.teams;
+      ROSTER_UNMATCHED = data.unmatched || [];
+      if (this.currentScreen === 'batterSelect') this.render();
+    } catch (err) {
+      console.warn('Rosters unavailable, falling back to the full batter list:', err.message);
     }
   }
 
@@ -1574,34 +1659,60 @@ createElement('div', { style: { flex: 1 } },
   }
 
   /**
-   * Step 1 of the inverted flow: pick a batter. The list comes from the cheap
-   * distinct-batter index (BATTERS_INDEX) — no pitch-space scan. Typing filters
-   * the list in place (without a full re-render, so the search box keeps focus).
+   * Step 1 of the inverted flow: pick a batter.
+   *
+   * Two ways to narrow 564 names down. The team selector is backed by iScore club
+   * rosters (~16 active hitters each), which is the reliable source — SLUGGER's own
+   * team_name is absent for 132 batters and cannot express a mid-season trade. The
+   * search box then ranks within whatever scope is selected.
+   *
+   * Typing filters the list in place rather than re-rendering, so the box keeps focus.
    */
   renderBatterSelect() {
     const handBadge = (bats) => {
-      const short = bats === 'Left' ? 'L' : bats === 'Right' ? 'R' : bats === 'Switch' ? 'S' : '–';
-      const bg = bats === 'Left' ? '#dbeafe' : bats === 'Right' ? '#fee2e2' : bats === 'Switch' ? '#ede9fe' : '#e5e7eb';
-      const fg = bats === 'Left' ? '#1e40af' : bats === 'Right' ? '#b91c1c' : bats === 'Switch' ? '#6d28d9' : '#475569';
+      const b = String(bats || '');
+      const short = b.startsWith('L') ? 'L' : b.startsWith('R') ? 'R' : b.startsWith('S') ? 'S' : '–';
+      const bg = short === 'L' ? '#dbeafe' : short === 'R' ? '#fee2e2' : short === 'S' ? '#ede9fe' : '#e5e7eb';
+      const fg = short === 'L' ? '#1e40af' : short === 'R' ? '#b91c1c' : short === 'S' ? '#6d28d9' : '#475569';
       return createElement('span', {
         style: { flex: '0 0 auto', minWidth: '22px', textAlign: 'center', fontWeight: '700', fontSize: '12px', padding: '2px 7px', borderRadius: '999px', background: bg, color: fg }
       }, short);
     };
 
+    // Scope: '' = every rostered hitter, a team guid = that club, 'ALL' = the full
+    // SLUGGER index including players not on any current roster.
+    const scope = this.batterScope === undefined ? '' : this.batterScope;
+    const rosterMode = ROSTERS.length > 0 && scope !== 'ALL';
+
+    const pool = !rosterMode
+      ? BATTERS_INDEX.map(b => ({ ...b, number: '', position: '' }))
+      : (scope
+          ? (ROSTERS.find(t => t.guid === scope) || { batters: [], name: '' })
+              .batters.map(b => ({ ...b, team: (ROSTERS.find(t => t.guid === scope) || {}).name }))
+          : ROSTERS.flatMap(t => t.batters.map(b => ({ ...b, team: t.name }))));
+
+    const rows = matchBatters(pool, this.batterQuery);
+
     const buildRows = (query) => {
-      const q = (query || '').trim().toLowerCase();
-      const matches = q
-        ? BATTERS_INDEX.filter(b => b.name.toLowerCase().includes(q) || (b.team || '').toLowerCase().includes(q))
-        : BATTERS_INDEX;
+      const matches = matchBatters(pool, query);
       if (matches.length === 0) {
-        return [createElement('div', { style: { padding: '20px', textAlign: 'center', color: '#64748b' } }, 'No batters match your search.')];
+        return [createElement('div', { style: { padding: '20px', textAlign: 'center', color: '#64748b' } },
+          rosterMode && scope
+            ? 'No one on this roster matches. Try "All teams", or switch to the full player list.'
+            : 'No batters match your search.')];
       }
       return matches.map(b => createElement('div', {
         className: 'batter-pick-row',
         style: { display: 'flex', alignItems: 'center', gap: '12px', padding: '11px 14px', borderBottom: '1px solid #eef2f7', cursor: 'pointer' },
         onclick: () => this.selectBatter(b)
       },
+        b.number
+          ? createElement('span', { style: { flex: '0 0 auto', minWidth: '30px', fontSize: '12px', fontWeight: '700', color: '#94a3b8', textAlign: 'right' } }, '#' + b.number)
+          : null,
         createElement('span', { style: { flex: '1 1 auto', fontWeight: '600', color: '#1e293b' } }, b.name),
+        b.position
+          ? createElement('span', { style: { flex: '0 0 auto', fontSize: '11px', color: '#94a3b8' } }, b.position)
+          : null,
         b.team ? createElement('span', { style: { flex: '0 1 auto', fontSize: '12px', color: '#64748b', textAlign: 'right' } }, b.team) : null,
         handBadge(b.bats)
       ));
@@ -1609,29 +1720,49 @@ createElement('div', { style: { flex: 1 } },
 
     const listEl = createElement('div', {
       id: 'batter-list',
-      style: { maxWidth: '620px', margin: '0 auto', textAlign: 'left', background: 'white', border: '1px solid #e9ecef', borderRadius: '12px', overflow: 'hidden', maxHeight: '62vh', overflowY: 'auto' }
+      style: { maxWidth: '620px', margin: '0 auto', textAlign: 'left', background: 'white', border: '1px solid #e9ecef', borderRadius: '12px', overflow: 'hidden', maxHeight: '58vh', overflowY: 'auto' }
     }, ...buildRows(this.batterQuery));
+
+    const refreshList = () => {
+      const l = document.getElementById('batter-list');
+      if (l) { l.innerHTML = ''; buildRows(this.batterQuery).forEach(r => l.appendChild(r)); }
+      const c = document.getElementById('batter-count');
+      if (c) c.textContent = `${matchBatters(pool, this.batterQuery).length} shown`;
+    };
 
     const searchEl = createElement('input', {
       id: 'batterSearch', type: 'search', value: this.batterQuery || '',
-      placeholder: 'Search batter or team…',
-      style: { width: '100%', maxWidth: '620px', margin: '0 auto 16px', display: 'block', boxSizing: 'border-box', padding: '12px 14px', fontSize: '15px', border: '1px solid #cbd5e1', borderRadius: '10px' },
-      oninput: (e) => {
-        this.batterQuery = e.target.value;
-        const l = document.getElementById('batter-list');
-        if (l) { l.innerHTML = ''; buildRows(this.batterQuery).forEach(r => l.appendChild(r)); }
-      }
+      placeholder: 'Search name, team or number…',
+      style: { width: '100%', maxWidth: '620px', margin: '0 auto 10px', display: 'block', boxSizing: 'border-box', padding: '12px 14px', fontSize: '15px', border: '1px solid #cbd5e1', borderRadius: '10px' },
+      oninput: (e) => { this.batterQuery = e.target.value; refreshList(); }
     });
+
+    // Team selector. Only meaningful once rosters have loaded, so it is omitted
+    // entirely when iScore is unreachable rather than shown empty.
+    const teamSelect = ROSTERS.length === 0 ? null : createElement('select', {
+      id: 'batterTeam',
+      style: { width: '100%', maxWidth: '620px', margin: '0 auto 10px', display: 'block', boxSizing: 'border-box', padding: '11px 14px', fontSize: '15px', border: '1px solid #cbd5e1', borderRadius: '10px', background: 'white', color: '#1e293b' },
+      onchange: (e) => { this.batterScope = e.target.value; this.render(); }
+    },
+      createElement('option', { value: '', ...(scope === '' ? { selected: 'selected' } : {}) },
+        `All teams — ${ROSTERS.reduce((n, t) => n + t.batters.length, 0)} hitters`),
+      ...ROSTERS.map(t => createElement('option',
+        { value: t.guid, ...(scope === t.guid ? { selected: 'selected' } : {}) },
+        `${t.name} (${t.batters.length})`)),
+      createElement('option', { value: 'ALL', ...(scope === 'ALL' ? { selected: 'selected' } : {}) },
+        `Everyone in SLUGGER (${BATTERS_INDEX.length}) — includes players with no current club`)
+    );
 
     return createElement('div', { className: 'team-select-screen' },
       createElement('h1', {}, 'Select a Batter'),
-      createElement('p', { style: { 'margin-bottom': '16px', fontSize: '15px', color: '#64748b', lineHeight: '1.4' } },
-        'Pick a batter to load their scouting card — pitch data is fetched only for the batter you choose.'
+      createElement('p', { style: { 'margin-bottom': '14px', fontSize: '15px', color: '#64748b', lineHeight: '1.4' } },
+        'Pick a team to narrow the list, then choose a batter — pitch data is fetched only for the batter you choose.'
       ),
-      createElement('div', { style: { textAlign: 'center', marginBottom: '14px' } },
-        createElement('span', { className: 'info-bubble' }, `${BATTERS_INDEX.length} batters`)
-      ),
+      teamSelect,
       searchEl,
+      createElement('div', { style: { textAlign: 'center', marginBottom: '12px' } },
+        createElement('span', { className: 'info-bubble', id: 'batter-count' }, `${rows.length} shown`)
+      ),
       listEl
     );
   }

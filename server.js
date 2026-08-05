@@ -11,6 +11,7 @@ const {
   outPitchFinishLocation, finishingToken,
 } = require('./lib/stats.js');
 const { buildCanonicalNameMap, dedupeBatters } = require('./lib/players.js');
+const { buildRosters } = require('./lib/iscore.js');
 // Strike zone geometry is shared with the browser client (pitch_logic.js is also
 // loaded as a plain <script> before app.js), so the labels the server assigns and
 // the grid the client draws are guaranteed to describe the same rectangle.
@@ -1681,6 +1682,66 @@ function filterByPitchGroup(pitches, pitchGroup) {
  * a different id than its team-tagged record is never lost).
  * @returns {Object} { batters: [{ name, ids:[...], team, bats }], count }
  */
+// Rosters change at most a few times a day (transactions, IL moves), and the
+// build costs 11 iScore calls, so it is memoised in process and mirrored to disk
+// so a cold container does not pay for it again.
+const ROSTER_TTL_MS = 6 * 60 * 60 * 1000;
+let rosterMemo = null; // { data, fetchedAt }
+
+function rosterCachePath() {
+  return path.join(CACHE_DIR, 'iscore_rosters.json');
+}
+
+function readRosterDiskCache() {
+  try {
+    const rec = JSON.parse(fs.readFileSync(rosterCachePath(), 'utf8'));
+    if (rec && rec.fetchedAt && (Date.now() - rec.fetchedAt) < ROSTER_TTL_MS) return rec;
+  } catch (_) { /* absent or unreadable — rebuild */ }
+  return null;
+}
+
+/**
+ * GET /api/rosters
+ * Current club rosters from iScore, with each hitter joined to their SLUGGER
+ * player IDs. This is the reliable team source: SLUGGER's own /players team_name
+ * is sparse (132 of 564 batters carry none) and cannot express a mid-season trade.
+ * @query {string} [refresh] - '1' to bypass the cache.
+ * @returns {Object} { teams: [{guid, name, batters}], unmatched, generatedAt, cached }
+ */
+const rostersHandler = async (req, res) => {
+  try {
+    if (lookupCache.players.size === 0) await populateLookupCaches();
+
+    const force = req.query.refresh === '1';
+    if (!force) {
+      if (rosterMemo && (Date.now() - rosterMemo.fetchedAt) < ROSTER_TTL_MS) {
+        return res.json({ ...rosterMemo.data, cached: 'memory' });
+      }
+      const disk = readRosterDiskCache();
+      if (disk) {
+        rosterMemo = disk;
+        return res.json({ ...disk.data, cached: 'disk' });
+      }
+    }
+
+    const data = await buildRosters(axios, lookupCache.players.values());
+    rosterMemo = { data, fetchedAt: Date.now() };
+    try {
+      fs.writeFileSync(rosterCachePath(), JSON.stringify(rosterMemo));
+    } catch (err) {
+      console.error('Roster cache write failed:', err.message);
+    }
+    console.log(`✅ Rosters: ${data.teams.length} teams, ` +
+      `${data.teams.reduce((n, t) => n + t.batters.length, 0)} hitters matched, ` +
+      `${data.unmatched.length} unmatched`);
+    res.json({ ...data, cached: false });
+  } catch (error) {
+    console.error('Error building rosters:', error.message);
+    // The batter picker must still work without iScore, so this stays non-fatal.
+    res.status(502).json({ error: 'rosters_failed', message: error.message, teams: [], unmatched: [] });
+  }
+};
+
 const battersHandler = async (req, res) => {
   try {
     // On Vercel the lookup cache warms in the background; build it on demand if empty.
@@ -1797,6 +1858,7 @@ const apiHealthHandler = (req, res) => {
 
 // Register API routes at root level
 app.get('/api/batters', battersHandler);
+app.get('/api/rosters', rostersHandler);
 app.get('/api/batter/card', batterCardHandler);
 app.get('/api/teams/range', teamsRangeHandler);
 app.get('/api/league-baseline', leagueBaselineHandler);
@@ -1805,6 +1867,7 @@ app.get('/api/health', apiHealthHandler);
 // Also register API routes at BASE_PATH for ALB routing
 if (BASE_PATH) {
   app.get(`${BASE_PATH}/api/batters`, battersHandler);
+  app.get(`${BASE_PATH}/api/rosters`, rostersHandler);
   app.get(`${BASE_PATH}/api/batter/card`, batterCardHandler);
   app.get(`${BASE_PATH}/api/teams/range`, teamsRangeHandler);
   app.get(`${BASE_PATH}/api/league-baseline`, leagueBaselineHandler);
