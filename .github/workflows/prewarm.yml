@@ -22,6 +22,27 @@ jobs:
   prewarm:
     runs-on: ubuntu-latest
     steps:
+      - name: Warm season range windows
+        run: |
+          BASE="https://www.alpb-analytics.com/widgets/flashcard/api"
+          START="2026-04-21"
+          TODAY=$(date -u +%F)
+          # The same ≤30-day windows the client loads a wide range through
+          # (planRangeChunks): warming them here means a coach's season click
+          # finds every window already cached and skips straight to the teams.
+          # summary=1 keeps each response tiny; the server does the real work.
+          cursor="$START"
+          while [ "$(date -ud "$cursor" +%s)" -le "$(date -ud "$TODAY" +%s)" ]; do
+            end=$(date -ud "$cursor + 29 days" +%F)
+            [ "$(date -ud "$end" +%s)" -gt "$(date -ud "$TODAY" +%s)" ] && end="$TODAY"
+            out=$(curl -s --http1.1 -o /dev/null -w "%{http_code} total=%{time_total}s" --max-time 200 --compressed "${BASE}/teams/range?startDate=${cursor}&endDate=${end}&maxVelocity=105&pitchGroup=All&summary=1") || true
+            echo "window ${cursor}..${end}: ${out:-request failed}"
+            cursor=$(date -ud "$cursor + 30 days" +%F)
+          done
+          # Assemble + memoize the full span so the team slices are served warm.
+          out=$(curl -s --http1.1 -o /dev/null -w "%{http_code} total=%{time_total}s" --max-time 240 --compressed "${BASE}/teams/range?startDate=${START}&endDate=${TODAY}&maxVelocity=105&pitchGroup=All&summary=1") || true
+          echo "season summary: ${out:-request failed}"
+
       - name: Warm league first-pitch baseline
         run: |
           BASE="https://www.alpb-analytics.com/widgets/flashcard/api"

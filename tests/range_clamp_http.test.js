@@ -6,7 +6,10 @@ const fs = require('fs');
 const path = require('path');
 
 process.env.AWS_LAMBDA_FUNCTION_NAME = 'unit-test-range-clamp';
-const CACHE_DIR = '/tmp/cache';
+// Own cache dir: test files run in parallel processes, and the cached-superset
+// test seeds a file that a sibling's beforeEach clear would race to delete.
+const CACHE_DIR = '/tmp/cache-range-clamp';
+process.env.CACHE_DIR = CACHE_DIR;
 
 const axios = require('axios');
 const realGet = axios.get;
@@ -144,8 +147,12 @@ test('an unreachable feed on the range path is a 503, not "no data for this rang
     throw err;
   };
 
+  // Not RANGE_PATH: the wire memo (keyed on the served range) already holds the
+  // clamp test's result for it, and a memo hit never touches the feed.
+  const failPath = `/api/teams/range?startDate=${isoOffset(-9)}&endDate=${END}&maxVelocity=105&pitchGroup=All`;
+
   await withServer(async port => {
-    const res = await get(port, RANGE_PATH);
+    const res = await get(port, failPath);
     assert.strictEqual(res.status, 503, res.body);
     const body = JSON.parse(res.body);
     assert.strictEqual(body.error, 'upstream_error');

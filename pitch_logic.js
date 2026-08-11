@@ -648,6 +648,34 @@ function getVisiblePitches(batterData, settings) {
   return { pitches: ordered, bucketCtx, populationCount: population.length };
 }
 
+/**
+ * Splits an inclusive date range into adjacent inclusive windows of at most
+ * `chunkDays` days: [start, start+chunkDays−1], [start+chunkDays, …], with the
+ * last window ending on `endDate`. Wide ranges are loaded through these windows —
+ * each fits every request budget (Lambda time, ALB response size) on its own, and
+ * every window except the one containing today keeps the same dates from day to
+ * day, so its server-side cache file stays warm across sessions.
+ * @param {string} startDate - ISO date (YYYY-MM-DD), inclusive.
+ * @param {string} endDate - ISO date (YYYY-MM-DD), inclusive.
+ * @param {number} [chunkDays=30] - Maximum days per window.
+ * @returns {{start: string, end: string}[]} Windows in date order.
+ */
+function planRangeChunks(startDate, endDate, chunkDays = 30) {
+  const addDays = (iso, n) => {
+    const d = new Date(`${iso}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + n);
+    return d.toISOString().slice(0, 10);
+  };
+  const chunks = [];
+  let cursor = startDate;
+  while (cursor <= endDate) {
+    const end = addDays(cursor, chunkDays - 1);
+    chunks.push({ start: cursor, end: end < endDate ? end : endDate });
+    cursor = addDays(cursor, chunkDays);
+  }
+  return chunks;
+}
+
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     WIN_OUTCOMES,
@@ -683,5 +711,6 @@ if (typeof module !== 'undefined' && module.exports) {
     interleave,
     computeBucketRatings,
     getVisiblePitches,
+    planRangeChunks,
   };
 }

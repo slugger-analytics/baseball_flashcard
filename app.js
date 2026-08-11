@@ -1063,6 +1063,9 @@ printCurrentCard() {
     // Season-scale loads work but take a while; if one still fails (timeout,
     // transient error), show a clear message instead of a raw 502.
     const spanDays = Math.round((new Date(endDate) - new Date(startDate)) / 86400000);
+    // Wider spans load in slices (see loadRangeSliced): a single season-scale
+    // response outgrows the ALB's 1 MB reply limit and reaches the user as a 502.
+    const SPLIT_SPAN_DAYS = 45;
     const tooLargeMessage = 'This large date range could not finish loading. Season-scale loads can take a couple of minutes — please try again, or pick a shorter range.';
 try {
       this.currentScreen = 'loading';
@@ -1088,11 +1091,17 @@ try {
       this.loadingParams = { pitchGroup: pitchLabel, maxVelocity, seasonYear, startDate, endDate, dateLabel };
       this.render();
 
-      const response = await fetch(
-        `./api/teams/range?startDate=${startDate}&endDate=${endDate}&maxVelocity=${maxVelocity}&pitchGroup=${pitchGroup}`
-      );
-
-      const data = await response.json();
+      const query = `maxVelocity=${maxVelocity}&pitchGroup=${pitchGroup}`;
+      let response, data, decoded = false;
+      if (spanDays <= SPLIT_SPAN_DAYS) {
+        response = await fetch(`./api/teams/range?startDate=${startDate}&endDate=${endDate}&${query}`);
+        data = await response.json();
+      } else {
+        const sliced = await this.loadRangeSliced(startDate, endDate, query);
+        response = sliced.response;
+        data = sliced.data;
+        decoded = sliced.decoded === true;
+      }
 
       if (!response.ok) {
         // Parse error response and set contextual message
@@ -1109,7 +1118,7 @@ try {
           this.noDataError = `No pitch data found for the velocity range you selected (≤${maxVelocity} MPH). Try increasing the maximum velocity.`;
           this.currentScreen = 'dateSelect';
         } else {
-          this.error = spanDays > 65
+          this.error = spanDays > SPLIT_SPAN_DAYS
             ? tooLargeMessage
             : (data.message || `Error loading data (${response.status})`);
           this.currentScreen = 'error';
@@ -1126,7 +1135,7 @@ try {
         return;
       }
 
-      decodePitchZones(data.teamsData, data.metadata && data.metadata.pzLegend);
+      if (!decoded) decodePitchZones(data.teamsData, data.metadata && data.metadata.pzLegend);
 
       // --- CACHE WRITE ---
       cachedSeasonData = { teamsData: data.teamsData, metadata: data.metadata };
@@ -1139,9 +1148,81 @@ try {
     } catch (err) {
       console.error(err);
       this.currentScreen = 'error';
-      this.error = spanDays > 65 ? tooLargeMessage : `Error loading data: ${err.message}`;
+      this.error = spanDays > SPLIT_SPAN_DAYS ? tooLargeMessage : `Error loading data: ${err.message}`;
       this.render();
     }
+  }
+
+  /**
+   * Loads a wide range in slices: warms it in ≤30-day windows, then fetches the
+   * team list and one team at a time. Every request stays far below the ALB
+   * response limit that a single season-scale payload outgrows, and the windows
+   * persist in the server's disk cache, so the next season load — anyone's —
+   * skips straight to the teams. Requests run one at a time on purpose: serial
+   * requests keep landing on the same warm Lambda container, whose memoized
+   * transform makes every slice after the first nearly free.
+   * @param {string} startDate - ISO date (YYYY-MM-DD).
+   * @param {string} endDate - ISO date (YYYY-MM-DD).
+   * @param {string} query - Pre-built maxVelocity/pitchGroup query-string tail.
+   * @returns {Promise<{response: Object, data: Object, decoded: boolean}>} Shaped
+   *   like the single-request path; a failed sub-request is returned as-is so the
+   *   caller's error mapping applies to it unchanged.
+   */
+  async loadRangeSliced(startDate, endDate, query) {
+    const fetchJson = async (url) => {
+      let response = null;
+      try { response = await fetch(url); } catch (_) { /* retried below */ }
+      // One retry on network failures and 5xx — a season-scale load shouldn't
+      // die to a single dropped connection ten requests in.
+      if (!response || (!response.ok && response.status >= 500)) {
+        response = await fetch(url);
+      }
+      let data = {};
+      try { data = await response.json(); } catch (_) { /* non-JSON error body */ }
+      return { response, data };
+    };
+    const setProgress = (progress) => {
+      if (this.loadingParams) this.loadingParams.progress = progress;
+      // Update the subtitle in place: a full render would stack a fresh
+      // loading-dots interval per progress step.
+      const el = document.querySelector('.loading-subtitle');
+      if (el) el.textContent = progress;
+      else this.render();
+    };
+
+    const chunks = planRangeChunks(startDate, endDate, 30);
+    for (let i = 0; i < chunks.length; i++) {
+      setProgress(`Gathering pitches — window ${i + 1} of ${chunks.length}`);
+      const warm = await fetchJson(`./api/teams/range?startDate=${chunks[i].start}&endDate=${chunks[i].end}&${query}&summary=1`);
+      // A window with no games in it is fine; any other failure is the load's.
+      if (!warm.response.ok && warm.data.error !== 'no_data' && warm.data.error !== 'no_data_velocity') {
+        return { response: warm.response, data: warm.data, decoded: false };
+      }
+    }
+
+    setProgress('Combining the full range');
+    const summary = await fetchJson(`./api/teams/range?startDate=${startDate}&endDate=${endDate}&${query}&summary=1`);
+    if (!summary.response.ok) {
+      return { response: summary.response, data: summary.data, decoded: false };
+    }
+
+    const teamNames = Object.keys(summary.data.teams || {}).sort();
+    const teamsData = {};
+    for (let i = 0; i < teamNames.length; i++) {
+      setProgress(`Loading teams — ${i + 1} of ${teamNames.length}`);
+      const slice = await fetchJson(`./api/teams/range?startDate=${startDate}&endDate=${endDate}&${query}&team=${encodeURIComponent(teamNames[i])}`);
+      if (!slice.response.ok) {
+        return { response: slice.response, data: slice.data, decoded: false };
+      }
+      decodePitchZones(slice.data.teamsData, slice.data.metadata && slice.data.metadata.pzLegend);
+      teamsData[teamNames[i]] = slice.data.teamsData[teamNames[i]];
+    }
+
+    return {
+      response: { ok: true, status: 200 },
+      data: { teamsData, metadata: summary.data.metadata },
+      decoded: true
+    };
   }
 
   /**
@@ -1256,7 +1337,7 @@ try {
 
     return createElement('div', { className: 'team-select-screen loading-screen' },
       createElement('h1', {}, 'Loading', dotsSpan),
-      createElement('p', { className: 'loading-subtitle' }, 'This may take a few minutes'),
+      createElement('p', { className: 'loading-subtitle' }, params.progress || 'This may take a few minutes'),
       createElement('div', { className: 'filter-pill-row' }, ...pillRow)
     );
   }

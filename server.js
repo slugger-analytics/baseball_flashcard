@@ -18,9 +18,11 @@ const { buildRosters } = require('./lib/iscore.js');
 const { getZoneFromLocation, plateToPercent } = require('./pitch_logic.js');
 
 // Vercel's and Lambda's filesystems are read-only except /tmp; use /tmp there, local cache/ elsewhere.
-const CACHE_DIR = (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME)
-  ? '/tmp/cache'
-  : path.join(__dirname, 'cache');
+// CACHE_DIR overrides both — tests run in parallel processes and need disjoint dirs.
+const CACHE_DIR = process.env.CACHE_DIR
+  || ((process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME)
+    ? '/tmp/cache'
+    : path.join(__dirname, 'cache'));
 if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
 
 const app = express();
@@ -281,6 +283,49 @@ function getCachePath(startDate, endDate) {
   return path.join(CACHE_DIR, `cache_${startDate}_${endDate}.json`);
 }
 
+// Matches whole-range cache files only — cache_batter_* and league_fp_* files
+// have non-date segments where the dates are expected and never match.
+const RANGE_CACHE_RE = /^cache_(\d{4}-\d{2}-\d{2})_(\d{4}-\d{2}-\d{2})\.json$/;
+
+/**
+ * Finds cached range files that exactly tile [startDate, endDate] — each file
+ * starting the day after the previous one ends. This is what lets a season-scale
+ * range be served without a season-scale upstream fetch: the client warms a wide
+ * range in ≤30-day windows (each fits every request budget on its own), and this
+ * chains them back together. Greedy: at each cursor it takes the file reaching
+ * furthest without overshooting the end, so overlapping files can't double-count
+ * a date — a file is only ever read from the exact day the previous one stopped.
+ * @param {string} startDate - Range start (YYYY-MM-DD, inclusive).
+ * @param {string} endDate - Range end (YYYY-MM-DD, inclusive).
+ * @returns {string[]|null} Cache file paths in date order, or null if the range
+ *   is not fully covered.
+ */
+function findCachedChain(startDate, endDate) {
+  let files;
+  try { files = fs.readdirSync(CACHE_DIR); } catch (_) { return null; }
+
+  const byStart = new Map();
+  for (const f of files) {
+    const m = RANGE_CACHE_RE.exec(f);
+    if (!m || m[1] < startDate || m[2] > endDate) continue;
+    const prev = byStart.get(m[1]);
+    if (!prev || m[2] > prev.end) byStart.set(m[1], { end: m[2], file: f });
+  }
+
+  const chain = [];
+  let cursor = startDate;
+  while (cursor <= endDate) {
+    const next = byStart.get(cursor);
+    if (!next) return null;
+    chain.push(path.join(CACHE_DIR, next.file));
+    if (next.end === endDate) return chain;
+    const d = new Date(`${next.end}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + 1);
+    cursor = d.toISOString().slice(0, 10);
+  }
+  return null;
+}
+
 /**
  * Streams a cached pitch array from disk using fs.createReadStream + stream-json.
  * Records are parsed incrementally so the full array is never simultaneously resident.
@@ -335,6 +380,15 @@ const MAX_CACHED_PITCHES = 200000;
 // budget). Env-overridable so a caller that needs more can ask without a code change.
 const MAX_UNCACHED_RANGE_DAYS = Number(process.env.MAX_UNCACHED_RANGE_DAYS || 60);
 
+// A full (no-team) /api/teams/range body bigger than this raw JSON size is refused
+// with a 413 and the team list instead of being sent: the ALB's 1 MB response limit
+// counts the base64-encoded gzip body, so an oversized response leaves here looking
+// fine and reaches the user as a bare 502. Measured on live columnar payloads:
+// gzip ≈ 6.3:1 and base64 adds 4/3, so ~4.7 MB raw is the physical ceiling; 4 MB
+// leaves headroom for less-compressible stretches. Per-team responses are never
+// refused — a single team's slice sits an order of magnitude below the limit.
+const MAX_WIRE_BYTES = Number(process.env.MAX_WIRE_BYTES || 4000000);
+
 const UPSTREAM_ERROR_MESSAGE = "Couldn't reach the league data feed. Please try again in a moment.";
 
 /**
@@ -381,6 +435,30 @@ async function fetchPitchesByDateRange(startDateStr, endDateStr) {
       console.error(`⚠️ Corrupt disk cache ${path.basename(cachePath)}, refetching:`, err.message);
       try { fs.unlinkSync(cachePath); } catch (_) { /* best effort */ }
     }
+  }
+
+  // A range fully tiled by cached sub-ranges (the client warms wide ranges in
+  // ≤30-day windows) is concatenated from disk instead of re-fetched. The files
+  // are date-disjoint and read in date order, so cross-PA pitch sequences —
+  // which never span days — come out exactly as a single fetch would order them.
+  const chain = findCachedChain(startDateStr, endDateStr);
+  if (chain) {
+    console.log(`💾 Assembling ${startDateStr} → ${endDateStr} from ${chain.length} cached sub-ranges`);
+    const parts = [];
+    let broken = false;
+    for (const file of chain) {
+      try {
+        parts.push(await readDiskCache(file));
+      } catch (err) {
+        // Drop the corrupt piece and fall through to a normal fetch — rare, and
+        // the next request re-plans around the missing file.
+        console.error(`⚠️ Corrupt cached sub-range ${path.basename(file)}, refetching range:`, err.message);
+        try { fs.unlinkSync(file); } catch (_) { /* best effort */ }
+        broken = true;
+        break;
+      }
+    }
+    if (!broken) return parts.flat();
   }
 
   console.log(`Fetching date range from SLUGGER API: ${startDateStr} to ${endDateStr}`);
@@ -1199,6 +1277,86 @@ const leagueBaselineHandler = async (req, res) => {
   }
 };
 
+// ── Wire-form range memo ──────────────────────────────────────────────────────
+// A wide range arrives as one summary request plus one request per team, all
+// within moments of each other and all needing the same transformed result. The
+// transform costs seconds at season scale, so the last few results are held in
+// wire form and concurrent identical requests share one computation instead of
+// racing their own.
+const WIRE_MEMO_MAX = 3;
+const wireMemo = new Map();     // key → resolved wire result
+const wireInFlight = new Map(); // key → Promise of the same
+
+/**
+ * Fetches, filters, transforms, and columnar-encodes a range, memoized.
+ * @returns {Promise<Object|null>} { wireTeams, pzLegend, teamCounts, totalPlayers,
+ *   filesProcessed, pitchesFilteredByVelocity }, or { emptyAfterVelocity: true }
+ *   when the velocity cap filtered everyone out, or null when the range has no
+ *   pitches at all. The two empty shapes are never memoized, so a brief upstream
+ *   gap cannot stick for the life of the container.
+ */
+async function getWireForRange(startDate, endDate, maxVelocity, pitchGroup) {
+  const key = `${startDate}_${endDate}_${maxVelocity}_${pitchGroup}`;
+  const hit = wireMemo.get(key);
+  if (hit) {
+    wireMemo.delete(key);
+    wireMemo.set(key, hit); // refresh LRU order
+    return hit;
+  }
+  if (wireInFlight.has(key)) return wireInFlight.get(key);
+
+  const compute = (async () => {
+    let pitches = await fetchPitchesByDateRange(startDate, endDate);
+    if (!pitches || pitches.length === 0) return null;
+
+    // League first-pitch baseline: pool over ALL pitches in the range (before any
+    // pitch-group filter) so the file for a given range always reflects the league,
+    // not a filtered subset. Persist to memo + disk for the batter-card endpoint.
+    const leaguePool = poolLeagueFirstPitch(pitches);
+    recordLeagueFirstPitch(startDate, endDate, leaguePool);
+
+    if (pitchGroup && pitchGroup !== 'All') {
+      const fastballs = ['Four-Seam', 'Sinker', 'Cutter'];
+      const breaking  = ['Slider', 'Curveball'];
+      const offspeed  = ['Changeup', 'ChangeUp', 'Splitter'];
+      pitches = pitches.filter(p => {
+        const pt = p.auto_pitch_type || p.tagged_pitch_type;
+        if (pitchGroup === 'Fastballs') return fastballs.includes(pt);
+        if (pitchGroup === 'Breaking')  return breaking.includes(pt);
+        if (pitchGroup === 'Offspeed')  return offspeed.includes(pt);
+        return true;
+      });
+    }
+
+    const teamsData = transformPitchDataToTeams(pitches, {}, maxVelocity, leaguePool.metric);
+    const totalPlayers = Object.values(teamsData).reduce((sum, team) => sum + team.length, 0);
+    if (totalPlayers === 0) return { emptyAfterVelocity: true };
+
+    const wire = encodePitchZonesColumnar(teamsData);
+    const teamCounts = {};
+    for (const [name, batters] of Object.entries(wire.teamsData)) teamCounts[name] = batters.length;
+
+    const result = {
+      wireTeams: wire.teamsData,
+      pzLegend: wire.pzLegend,
+      teamCounts,
+      totalPlayers,
+      filesProcessed: pitches.length,
+      pitchesFilteredByVelocity: countPitchesByVelocity(pitches, maxVelocity),
+    };
+    wireMemo.set(key, result);
+    if (wireMemo.size > WIRE_MEMO_MAX) wireMemo.delete(wireMemo.keys().next().value);
+    return result;
+  })();
+
+  wireInFlight.set(key, compute);
+  try {
+    return await compute;
+  } finally {
+    wireInFlight.delete(key);
+  }
+}
+
 /**
  * GET /api/teams/range
  * Returns batter scouting data for a given date range.
@@ -1206,7 +1364,9 @@ const leagueBaselineHandler = async (req, res) => {
  * @query {string} endDate - End date. Must not be in the future.
  * @query {number} [maxVelocity] - Exclude pitches faster than this speed (mph).
  * @query {string} [pitchGroup] - Filter by pitch category: 'Fastballs', 'Breaking', or 'Offspeed'.
- * @returns {Object} { teamsData, metadata }
+ * @query {string} [summary] - '1' returns the team list + metadata, no batter data.
+ * @query {string} [team] - Return only this team's batters (a display name from summary).
+ * @returns {Object} { teamsData, metadata } — or { teams, metadata } for summary=1
  */
 const teamsRangeHandler = async (req, res) => {
   try {
@@ -1263,7 +1423,8 @@ const teamsRangeHandler = async (req, res) => {
     const requestedStartDate = finalStartDate;
     let clampNotice = null;
     if (spanDays(finalStartDate, finalEndDate) > MAX_UNCACHED_RANGE_DAYS &&
-        !fs.existsSync(getCachePath(finalStartDate, finalEndDate))) {
+        !fs.existsSync(getCachePath(finalStartDate, finalEndDate)) &&
+        !findCachedChain(finalStartDate, finalEndDate)) {
       const clampedStart = new Date(`${finalEndDate}T00:00:00Z`);
       clampedStart.setUTCDate(clampedStart.getUTCDate() - MAX_UNCACHED_RANGE_DAYS);
       finalStartDate = clampedStart.toISOString().slice(0, 10);
@@ -1276,83 +1437,82 @@ const teamsRangeHandler = async (req, res) => {
 
     console.log(`\nFetching date range: ${finalStartDate} to ${finalEndDate}`);
 
-    // fetch pitches
-    let pitches;
+    // fetch + transform + encode, memoized — a wide range arrives as one summary
+    // request plus one request per team, all needing the same result
+    const parsedMaxVelocity = maxVelocity ? parseFloat(maxVelocity) : 999;
+    let wire;
     try {
-      pitches = await fetchPitchesByDateRange(finalStartDate, finalEndDate);
+      wire = await getWireForRange(finalStartDate, finalEndDate, parsedMaxVelocity,
+        pitchGroup && pitchGroup !== 'All' ? pitchGroup : 'All');
     } catch (err) {
       console.error('Upstream fetch failed for range:', err.message);
       return res.status(503).json({ error: 'upstream_error', message: UPSTREAM_ERROR_MESSAGE });
     }
 
-    if (!pitches || pitches.length === 0) {
+    if (!wire) {
       return res.status(404).json({
         error: 'no_data',
         message: 'No pitch data found for this date range. The season may not have started yet.'
       });
     }
 
-    // League first-pitch baseline: pool over ALL pitches in the range (before any
-    // pitch-group filter) so the file for a given range always reflects the league,
-    // not a filtered subset. Persist to memo + disk for the batter-card endpoint.
-    const leaguePool = poolLeagueFirstPitch(pitches);
-    recordLeagueFirstPitch(finalStartDate, finalEndDate, leaguePool);
-    const leagueFirstPitchAvg = leaguePool.metric;
-
-    // filter by pitch group if specified
-    if (pitchGroup && pitchGroup !== 'All') {
-      const fastballs = ['Four-Seam', 'Sinker', 'Cutter'];
-      const breaking  = ['Slider', 'Curveball'];
-      const offspeed  = ['Changeup', 'ChangeUp', 'Splitter'];
-      pitches = pitches.filter(p => {
-        const pt = p.auto_pitch_type || p.tagged_pitch_type;
-        if (pitchGroup === 'Fastballs') return fastballs.includes(pt);
-        if (pitchGroup === 'Breaking')  return breaking.includes(pt);
-        if (pitchGroup === 'Offspeed')  return offspeed.includes(pt);
-        return true;
-      });
-    }
-
-    // parse maxVelocity
-    const parsedMaxVelocity = maxVelocity ? parseFloat(maxVelocity) : 999;
-
-    // transform data with velocity filter
-    const teamsData = transformPitchDataToTeams(pitches, {}, parsedMaxVelocity, leagueFirstPitchAvg);
-
-    // check if any data survived the velocity filter
-    const totalPlayers = Object.values(teamsData).reduce((sum, team) => sum + team.length, 0);
-    
-    if (totalPlayers === 0) {
+    if (wire.emptyAfterVelocity) {
       return res.status(404).json({
         error: 'no_data_velocity',
         message: 'No Data Available for this velocity range'
       });
     }
-    
-    const teamCount = Object.keys(teamsData).length;
-    console.log(`✅ Complete: ${teamCount} teams, ${totalPlayers} players\n`);
 
-    const wire = encodePitchZonesColumnar(teamsData);
+    console.log(`✅ Complete: ${Object.keys(wire.wireTeams).length} teams, ${wire.totalPlayers} players\n`);
 
-    res.json({
-      teamsData: wire.teamsData,
-      metadata: {
-        startDate: finalStartDate,
-        endDate: finalEndDate,
-        filesProcessed: pitches.length,
-        pitchesFilteredByVelocity: countPitchesByVelocity(pitches, parsedMaxVelocity),
-        pzLegend: wire.pzLegend,
-        // Only present when the window served is narrower than the one asked for.
-        // The client must show `notice` — a coach seeing less data than they
-        // requested has to be told, never left to assume it's the full range.
-        ...(clampNotice ? {
-          requestedStartDate,
-          clampedTo: MAX_UNCACHED_RANGE_DAYS,
-          partial: true,
-          notice: clampNotice
-        } : {})
+    const metadata = {
+      startDate: finalStartDate,
+      endDate: finalEndDate,
+      filesProcessed: wire.filesProcessed,
+      pitchesFilteredByVelocity: wire.pitchesFilteredByVelocity,
+      pzLegend: wire.pzLegend,
+      // Only present when the window served is narrower than the one asked for.
+      // The client must show `notice` — a coach seeing less data than they
+      // requested has to be told, never left to assume it's the full range.
+      ...(clampNotice ? {
+        requestedStartDate,
+        clampedTo: MAX_UNCACHED_RANGE_DAYS,
+        partial: true,
+        notice: clampNotice
+      } : {})
+    };
+
+    // Wide ranges are served in slices that stay far below the ALB's response
+    // limit: summary=1 returns the team list, team=<name> one team's batters.
+    if (String(req.query.summary || '') === '1') {
+      return res.json({ teams: wire.teamCounts, metadata });
+    }
+
+    const teamParam = typeof req.query.team === 'string' ? req.query.team : null;
+    if (teamParam !== null) {
+      const batters = wire.wireTeams[teamParam];
+      if (!batters) {
+        return res.status(404).json({
+          error: 'unknown_team',
+          message: `No team named "${teamParam}" in this range.`,
+          teams: Object.keys(wire.wireTeams)
+        });
       }
-    });
+      return res.json({ teamsData: { [teamParam]: batters }, metadata });
+    }
+
+    // Full response, guarded: past ~4 MB raw the gzipped-then-base64 body blows
+    // the ALB's 1 MB limit and reaches the user as a bare 502 — refuse with the
+    // team list instead, so a caller can switch to per-team requests.
+    const body = JSON.stringify({ teamsData: wire.wireTeams, metadata });
+    if (body.length > MAX_WIRE_BYTES) {
+      return res.status(413).json({
+        error: 'response_too_large',
+        message: 'This range is too large for one response. Request it per team (team=<name>) or pick a shorter range.',
+        teams: Object.keys(wire.wireTeams)
+      });
+    }
+    res.type('application/json').send(body);
 
   } catch (error) {
     console.error('Error:', error.message);
