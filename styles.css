@@ -2249,6 +2249,72 @@ button:active {
   .print-widget .arsenal__type-row td { color: #444444 !important; font-size: 8pt !important; }
   .print-widget .arsenal__ci { color: #666666 !important; font-size: 7.5pt !important; }
   .print-widget .arsenal__foot { color: #666666 !important; font-size: 6.5pt !important; }
+
+  /* ── One-page fit ───────────────────────────────────────────────────────────
+     A letter sheet at 0.3in margins leaves 7.9 x 10.4in. Stacked in a column the
+     card overran it: the zone graphic alone ran ~4.9in (46% of the page width at
+     a 3:4 ratio), the arsenal table added ~2.2in directly beneath it, and the
+     tendencies grid wanted ~4in more. The tendencies were pushed onto a second
+     sheet.
+
+     Two changes fix it. The widget becomes a grid so the arsenal sits in the dead
+     space BESIDE the zone instead of under it, reclaiming its full height; and the
+     zone is sized by HEIGHT rather than by a percentage width, so the vertical
+     budget — the dimension that actually overflows — is stated directly instead of
+     falling out of the page width. */
+  .print-widget {
+    display: grid !important;
+    grid-template-columns: 1fr auto !important;
+    grid-template-areas:
+      "head  head"
+      "zone  arsenal"
+      "info  info" !important;
+    align-items: start !important;
+    column-gap: 10pt !important;
+    /* The old 10in cap only clipped an overflowing box; it never made it fit. */
+    max-height: none !important;
+  }
+  .print-widget > .header             { grid-area: head !important; }
+  .print-widget > .pitch-zone-section { grid-area: zone !important; }
+  .print-widget > .arsenal            { grid-area: arsenal !important; align-self: start !important; }
+  .print-widget > .info-section       { grid-area: info !important; }
+
+  /* Height-first: state the vertical size and let aspect-ratio derive the width.
+     5/6 matches the zone's real coordinate space (2.78ft wide x 3.33ft tall) — the
+     old 3/4 stretched every plotted pitch horizontally by about 10%. */
+  .print-widget .pitch-zone {
+    height: 3.5in !important;
+    width: auto !important;
+    max-width: none !important;
+    aspect-ratio: 5 / 6 !important;
+  }
+
+  .print-widget .batter-graphic {
+    width: 26% !important;
+    max-width: 1.7in !important;
+    height: auto !important;
+  }
+
+  .print-widget .arsenal {
+    max-width: 2.3in !important;
+    margin: 0 !important;
+  }
+
+  /* Tendencies take whatever budget is left. 11.5pt still reads at arm's length
+     on paper, which is what this card is for. */
+  .print-widget .info-section *  { font-size: 11.5pt !important; line-height: 1.25 !important; }
+  .print-widget .info-section h3,
+  .print-widget .info-section h4 { font-size: 12.5pt !important; }
+  .print-widget .threat-item,
+  .print-widget .threat-label,
+  .print-widget .threat-value,
+  .print-widget .power-sequence-text { font-size: 11.5pt !important; }
+
+  /* Last line of defence: one card is one sheet. */
+  .print-page {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
 }
 
 .team-btn:hover {
