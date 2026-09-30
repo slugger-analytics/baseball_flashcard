@@ -315,7 +315,8 @@ Pitch data lives behind the SLUGGER API (ALPB + Trackman). A valid `SLUGGER_API_
 ## Known Issues & Limitations
 
 - **ALPB 2026 season calendar** is hardcoded (April 21 – September 13). Update the calendar constants in `server.js` at the start of each new season.
-- **Cache invalidation** is date-range-keyed only — if the underlying data changes for a date range already cached, delete the relevant file from `cache/` (local) or redeploy (Vercel `/tmp` is ephemeral).
+- **Cache invalidation** is date-range-keyed and versioned. Current `_v2` pitch caches retain the upstream `game_id`; older cache files are ignored. If the underlying data changes for a date range already cached, delete the relevant current-version file from `cache/` (local) or redeploy (Vercel `/tmp` is ephemeral).
+- **Analysis calibration** requires a time-ordered historical holdout. Raw pitch data is not committed, so do not adjust model constants using only unit-test fixtures or evaluate on the same games used to fit them.
 - **Large date ranges** can be slow on first load (cold cache) due to paginated API fetching; subsequent loads for the same range are fast.
 
 ---

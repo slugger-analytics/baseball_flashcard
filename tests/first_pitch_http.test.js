@@ -6,14 +6,15 @@ const fs = require('fs');
 const path = require('path');
 
 process.env.AWS_LAMBDA_FUNCTION_NAME = 'unit-test-first-pitch';
-const CACHE_DIR = '/tmp/cache';
+const CACHE_DIR = '/tmp/cache-first-pitch-http';
+process.env.CACHE_DIR = CACHE_DIR;
 
 const app = require('../server.js');
 
 const BATTER_ID = 'fp-test-0001';
 const START = '2026-05-10';
 const END = '2026-05-11';
-const SEED_FILE = path.join(CACHE_DIR, `cache_batter_${BATTER_ID}_${START}_${END}.json`);
+const SEED_FILE = path.join(CACHE_DIR, `cache_batter_${BATTER_ID}_${START}_${END}_v2.json`);
 
 function mkPitch(pitch_call, balls, strikes) {
   return {
@@ -39,15 +40,10 @@ function get(port, p) {
 
 test('tendencies.firstStrike keeps the "Label (NN%)" shape', async () => {
   fs.mkdirSync(CACHE_DIR, { recursive: true });
-  // This test asserts the COLD-container reading (firstStrikePending === true), but
-  // getLeagueFirstPitchAvg falls back to scanning CACHE_DIR for any league_fp_*.json.
-  // /tmp/cache is shared with anything else that has run on this machine — including
-  // the /api/league-baseline endpoint, which writes exactly those files — so clear
-  // them or this passes/fails depending on run order.
+  // This test asserts the cold-baseline state. Its private cache prevents parallel
+  // HTTP tests from writing a league_fp file between cleanup and this request.
   for (const f of fs.readdirSync(CACHE_DIR)) {
-    if (f.startsWith('league_fp_') && f.endsWith('.json')) {
-      try { fs.unlinkSync(path.join(CACHE_DIR, f)); } catch (_) { /* best effort */ }
-    }
+    try { fs.unlinkSync(path.join(CACHE_DIR, f)); } catch (_) { /* best effort */ }
   }
   // Three 0-0 pitches (2 swings, 1 take) + a non-0-0 pitch that must be ignored.
   fs.writeFileSync(SEED_FILE, JSON.stringify([

@@ -74,7 +74,7 @@ function get(port, p) {
 
 async function loadCard(batterId, pitches, assertions) {
   fs.mkdirSync(CACHE_DIR, { recursive: true });
-  const seed = path.join(CACHE_DIR, `cache_batter_${batterId}_${START}_${END}.json`);
+  const seed = path.join(CACHE_DIR, `cache_batter_${batterId}_${START}_${END}_v2.json`);
   fs.writeFileSync(seed, JSON.stringify(pitches));
   const server = app.listen(0);
   await new Promise(r => server.on('listening', r));
@@ -109,6 +109,46 @@ test('the existing out-sequence output is unchanged', async () => {
     assert.strictEqual(batter.powerSequenceBreakdown.kSwinging, 16);
     assert.strictEqual(batter.powerSequenceBreakdown.kLooking, 0);
     assert.strictEqual(batter.powerSequenceBreakdown.contactOut, 0);
+  });
+});
+
+test('plate appearances in same-day games do not form a cross-game sequence', async () => {
+  const batterId = 'ol-test-date-key';
+  const base = {
+    rel_speed: 88, batter_id: batterId, batter_team_code: 'YOR', pitcher_id: 'p1',
+    batter_side: 'Right', pitcher_throws: 'Right', top_or_bottom: 'Top', inning: 1,
+    pa_of_inning: 1, plate_loc_side: 0, plate_loc_height: 2.5,
+  };
+  const pitches = [
+    { ...base, game_id: 'game-a', date: START, balls: 0, strikes: 0, auto_pitch_type: 'Four-Seam', pitch_call: 'StrikeCalled' },
+    { ...base, game_id: 'game-b', date: START, balls: 0, strikes: 1, auto_pitch_type: 'Slider', pitch_call: 'StrikeSwinging', k_or_bb: 'Strikeout' },
+  ];
+  await loadCard(batterId, pitches, batter => {
+    assert.strictEqual(batter.powerSequence, 'Insufficient data');
+  });
+});
+
+test('zone contact counters separate fouls, balls in play, and exit-speed coverage', async () => {
+  const batterId = 'ol-test-zone-contact';
+  const base = {
+    date: START, rel_speed: 88, batter_id: batterId, batter_team_code: 'YOR',
+    pitcher_id: 'p1', batter_side: 'Right', pitcher_throws: 'Right', top_or_bottom: 'Top',
+    inning: 1, pa_of_inning: 1, plate_loc_side: 0, plate_loc_height: 2.5,
+    balls: 0, strikes: 0, auto_pitch_type: 'Slider',
+  };
+  const pitches = [
+    { ...base, pitch_call: 'FoulBall', exit_speed: 101 },
+    { ...base, pitch_call: 'InPlay', exit_speed: 98 },
+    { ...base, pitch_call: 'InPlay', exit_speed: null },
+    { ...base, pitch_call: 'InPlay' },
+  ];
+  await loadCard(batterId, pitches, batter => {
+    const zone = batter.zoneAnalysis['Mid-Mid'];
+    assert.strictEqual(zone.contact, 4);
+    assert.strictEqual(zone.ballsInPlay, 3);
+    assert.strictEqual(zone.exitSpeedCount, 1);
+    assert.strictEqual(zone.hardHits, 1);
+    assert.strictEqual(zone.weakContact, 0);
   });
 });
 

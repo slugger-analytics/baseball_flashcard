@@ -508,49 +508,47 @@ const stripPercents = (text) => {
   const hotZones = [];
   if (zoneAnalysis) {
     const zoneScores = {};
-    const minPitches = CURRENT_SETTINGS.vulnerableZoneMinSwings;
+    const minSwings = CURRENT_SETTINGS.vulnerableZoneMinSwings;
 
     Object.entries(zoneAnalysis).forEach(([zone, stats]) => {
 
-      if ((stats.pitches || 0) < minPitches) return;
+      if (!meetsZoneSwingMinimum(stats, minSwings)) return;
       // No swings in the zone → whiff/chase rates are undefined (0/0 = NaN)
       if ((stats.swings || 0) === 0) return;
 
       const whiff_percent = (stats.whiffs / stats.swings) * 100;
-      const chase_percent = (stats.fouls / stats.swings) * 100;
-      const weakConstant_percent = stats.contact > 0 ? (stats.weakContact / stats.contact) * 100 : 0;
-      const hardHit_percent = stats.contact > 0 ? (stats.hardHits / stats.contact) * 100 : 0;
+      const foul_percent = (stats.fouls / stats.swings) * 100;
+      const contactRates = zoneContactRates(stats);
+      const weakContact_percent = contactRates.weakContactPercent;
+      const hardHit_percent = contactRates.hardHitPercent;
 
-      zoneScores[zone] = { whiff_percent, chase_percent, weakConstant_percent, hardHit_percent, stats };
+      zoneScores[zone] = { whiff_percent, foul_percent, weakContact_percent, hardHit_percent, stats, contactRates };
     });
 
     const zones = Object.keys(zoneScores);
 
     if (zones.length > 0) {
       const getRank = (metric) => {
-        const values = zones.map(z => zoneScores[z][metric]);
-        const sorted = [...values].sort((a, b) => b - a);
-        const ranks = {};
-
-        zones.forEach(z => {
-          const idx = sorted.findIndex(v => Math.abs(v - zoneScores[z][metric]) < 0.0001);
-          ranks[z] = zones.length === 1 ? 100 : ((idx === -1 ? 0 : idx) / (zones.length - 1)) * 100;
-        });
-        return ranks;
+        const values = {};
+        zones.forEach(zone => { values[zone] = zoneScores[zone][metric]; });
+        return rankZoneValues(values);
       };
     
 
       const whiffRanks = getRank('whiff_percent');
-      const chaseRanks = getRank('chase_percent');
-      const weakContactRanks = getRank('weakConstant_percent');
-      const hardHitRanks = getRank('hardHit_percent');
+      const foulRanks = getRank('foul_percent');
+      const weakContactRanks = getRank('weakContact_percent');
 
       zones.forEach(zone => {
-        const vulnerabilityScore = (
-          whiffRanks[zone] * 0.45 +
-          weakContactRanks[zone] * 0.35 +
-          chaseRanks[zone] * 0.20
-        );
+        const factors = [
+          { rank: whiffRanks[zone], weight: 0.45 },
+          { rank: weakContactRanks[zone], weight: 0.35 },
+          { rank: foulRanks[zone], weight: 0.20 },
+        ].filter(factor => factor.rank !== undefined);
+        const totalWeight = factors.reduce((total, factor) => total + factor.weight, 0);
+        const vulnerabilityScore = factors.reduce(
+          (total, factor) => total + factor.rank * factor.weight, 0
+        ) / totalWeight;
 
         let severity = null;
 
@@ -559,13 +557,27 @@ const stripPercents = (text) => {
         else if (vulnerabilityScore <= 60) severity = 'MODERATE';
 
         if (severity) {
-          vulnerableZones.push({zone, score : vulnerabilityScore.toFixed(0), severity})
+          vulnerableZones.push({
+            zone,
+            score: vulnerabilityScore.toFixed(0),
+            severity,
+            swings: zoneScores[zone].stats.swings,
+            exitSpeedCount: zoneScores[zone].contactRates.exitSpeedCount,
+          });
         }
 
         // hot zone check
-        if (hardHitRanks[zone] >= CURRENT_SETTINGS.hotZoneHardHitThreshold && 
-          zoneScores[zone].stats.hardHits >= CURRENT_SETTINGS.hotZoneMinHardHits) {
-          hotZones.push({zone, hardHitPct: zoneScores[zone].hardHit_percent.toFixed(0)});
+        if (meetsHotZoneThreshold(
+          zoneScores[zone].hardHit_percent,
+          zoneScores[zone].stats.hardHits,
+          CURRENT_SETTINGS.hotZoneHardHitThreshold,
+          CURRENT_SETTINGS.hotZoneMinHardHits
+        )) {
+          hotZones.push({
+            zone,
+            hardHitPct: zoneScores[zone].hardHit_percent.toFixed(0),
+            exitSpeedCount: zoneScores[zone].contactRates.exitSpeedCount,
+          });
         }
       });
     }
@@ -611,7 +623,8 @@ const stripPercents = (text) => {
         createElement('button', { className: 'section-info-btn', onclick: (e) => { e.stopPropagation(); openInfoModal('vulnerable'); } }, 'ℹ')
       ),
       createElement('div', { className: 'power-sequence-text' },
-        cappedVulnerableZones.slice(0, 2).map(z => `${z.zone} (${z.score})`).join(', ')),
+        cappedVulnerableZones.slice(0, 2)
+          .map(z => `${z.zone} (${z.score}; ${z.swings} swings, ${z.exitSpeedCount} EV)`).join(', ')),
     ) : null,
     hotZones.length > 0 ? createElement('div', { className: 'power-sequence hot-zone' },
       createElement('h4', { style: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' } },
@@ -619,7 +632,7 @@ const stripPercents = (text) => {
         createElement('button', { className: 'section-info-btn', onclick: (e) => { e.stopPropagation(); openInfoModal('hot'); } }, 'ℹ')
       ),
       createElement('div', { className: 'power-sequence-text' },
-        hotZones.slice(0, 2).map(z => z.zone).join(', ') || 'None identified'),
+        hotZones.slice(0, 2).map(z => `${z.zone} (${z.hardHitPct}% of ${z.exitSpeedCount} tracked)`).join(', ') || 'None identified'),
     ) : null,
     createElement('div', { className: 'power-sequence out-sequence' },
       createElement('h4', { style: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' } },
@@ -1750,101 +1763,169 @@ createElement('div', { style: { flex: 1 } },
    * Typing filters the list in place rather than re-rendering, so the box keeps focus.
    */
   renderBatterSelect() {
-    const handBadge = (bats) => {
-      const b = String(bats || '');
-      const short = b.startsWith('L') ? 'L' : b.startsWith('R') ? 'R' : b.startsWith('S') ? 'S' : '–';
-      const bg = short === 'L' ? '#dbeafe' : short === 'R' ? '#fee2e2' : short === 'S' ? '#ede9fe' : '#e5e7eb';
-      const fg = short === 'L' ? '#1e40af' : short === 'R' ? '#b91c1c' : short === 'S' ? '#6d28d9' : '#475569';
-      return createElement('span', {
-        style: { flex: '0 0 auto', minWidth: '22px', textAlign: 'center', fontWeight: '700', fontSize: '12px', padding: '2px 7px', borderRadius: '999px', background: bg, color: fg }
-      }, short);
-    };
-
     // Scope: '' = every rostered hitter, a team guid = that club, 'ALL' = the full
     // SLUGGER index including players not on any current roster.
     const scope = this.batterScope === undefined ? '' : this.batterScope;
-    const rosterMode = ROSTERS.length > 0 && scope !== 'ALL';
 
-    const pool = !rosterMode
-      ? BATTERS_INDEX.map(b => ({ ...b, number: '', position: '' }))
-      : (scope
-          ? (ROSTERS.find(t => t.guid === scope) || { batters: [], name: '' })
-              .batters.map(b => ({ ...b, team: (ROSTERS.find(t => t.guid === scope) || {}).name }))
-          : ROSTERS.flatMap(t => t.batters.map(b => ({ ...b, team: t.name }))));
-
-    const rows = matchBatters(pool, this.batterQuery);
-
-    const buildRows = (query) => {
-      const matches = matchBatters(pool, query);
-      if (matches.length === 0) {
-        return [createElement('div', { style: { padding: '20px', textAlign: 'center', color: '#64748b' } },
-          rosterMode && scope
-            ? 'No one on this roster matches. Try "All teams", or switch to the full player list.'
-            : 'No batters match your search.')];
+    const getPool = (selectedScope) => {
+      const useRosters = ROSTERS.length > 0 && selectedScope !== 'ALL';
+      if (!useRosters) return BATTERS_INDEX.map(b => ({ ...b, number: '', position: '' }));
+      if (selectedScope) {
+        const team = ROSTERS.find(t => t.guid === selectedScope);
+        return (team ? team.batters : []).map(b => ({ ...b, team: team.name }));
       }
-      return matches.map(b => createElement('div', {
-        className: 'batter-pick-row',
-        style: { display: 'flex', alignItems: 'center', gap: '12px', padding: '11px 14px', borderBottom: '1px solid #eef2f7', cursor: 'pointer' },
-        onclick: () => this.selectBatter(b)
+      return ROSTERS.flatMap(t => t.batters.map(b => ({ ...b, team: t.name })));
+    };
+
+    const scopeChoices = ROSTERS.length === 0 ? [] : [
+      { scope: '', label: `All teams (${ROSTERS.reduce((n, t) => n + t.batters.length, 0)} hitters)` },
+      ...ROSTERS.map(t => ({ scope: t.guid, label: `${t.name} (${t.batters.length})` })),
+      { scope: 'ALL', label: `Everyone in SLUGGER (${BATTERS_INDEX.length}; includes players without a current club)` }
+    ];
+    let pool = getPool(scope);
+    let activeOptions = [];
+    let activeIndex = -1;
+    let menuOpen = false;
+    let searchEl;
+    let menuEl;
+    let countEl;
+
+    const updateCount = () => {
+      if (countEl) countEl.textContent = `${matchBatters(pool, this.batterQuery).length} players match`;
+    };
+
+    const choose = (option) => {
+      if (option.kind === 'scope') {
+        this.batterScope = option.scope;
+        this.batterQuery = '';
+        searchEl.value = '';
+        pool = getPool(option.scope);
+        activeIndex = -1;
+        updateCount();
+        renderOptions(true);
+        searchEl.focus();
+      } else {
+        this.selectBatter(option.batter);
+      }
+    };
+
+    const renderOptions = (open = menuOpen) => {
+      menuOpen = open;
+      menuEl.replaceChildren();
+      if (!menuOpen) {
+        menuEl.hidden = true;
+        return;
+      }
+      menuEl.hidden = false;
+      const query = searchEl.value;
+      const normalizedQuery = searchNorm(query);
+      const activeScope = this.batterScope === undefined ? '' : this.batterScope;
+      const selectedTeam = ROSTERS.find(team => team.guid === activeScope);
+      const matchingScopes = scopeChoices.filter(choice => {
+        if (normalizedQuery) return searchNorm(choice.label).includes(normalizedQuery);
+        if (selectedTeam) return choice.scope === '' || choice.scope === 'ALL';
+        return true;
+      });
+      const matchingPlayers = matchBatters(pool, query).slice(0, 12);
+      activeOptions = [
+        ...matchingScopes.map(choice => ({ kind: 'scope', ...choice })),
+        ...matchingPlayers.map(batter => ({ kind: 'player', batter }))
+      ];
+      activeIndex = Math.min(activeIndex, activeOptions.length - 1);
+
+      const appendHeading = (label) => menuEl.appendChild(createElement('div', {
+        style: { padding: '7px 12px 4px', color: '#64748b', fontSize: '11px', fontWeight: '700', textTransform: 'uppercase' }
+      }, label));
+      const appendOption = (option, index, label, detail) => menuEl.appendChild(createElement('button', {
+        type: 'button', role: 'option', 'aria-selected': index === activeIndex ? 'true' : 'false',
+        id: `batter-option-${index}`,
+        style: {
+          width: '100%', display: 'flex', justifyContent: 'space-between', gap: '12px', padding: '9px 12px',
+          border: '0', borderTop: '1px solid #f1f5f9', background: index === activeIndex ? '#eff6ff' : 'white',
+          color: '#1e293b', textAlign: 'left', cursor: 'pointer', fontSize: '14px'
+        },
+        onmousedown: (event) => event.preventDefault(),
+        onclick: () => choose(option)
       },
-        b.number
-          ? createElement('span', { style: { flex: '0 0 auto', minWidth: '30px', fontSize: '12px', fontWeight: '700', color: '#94a3b8', textAlign: 'right' } }, '#' + b.number)
-          : null,
-        createElement('span', { style: { flex: '1 1 auto', fontWeight: '600', color: '#1e293b' } }, b.name),
-        b.position
-          ? createElement('span', { style: { flex: '0 0 auto', fontSize: '11px', color: '#94a3b8' } }, b.position)
-          : null,
-        b.team ? createElement('span', { style: { flex: '0 1 auto', fontSize: '12px', color: '#64748b', textAlign: 'right' } }, b.team) : null,
-        handBadge(b.bats)
+        createElement('span', { style: { fontWeight: '600' } }, label),
+        detail ? createElement('span', { style: { color: '#64748b', fontSize: '12px' } }, detail) : null
       ));
+
+      let index = 0;
+      if (matchingScopes.length) {
+        appendHeading('Teams and player lists');
+        matchingScopes.forEach(choice => {
+          appendOption({ kind: 'scope', ...choice }, index++, choice.label, choice.scope === this.batterScope ? 'Current' : '');
+        });
+      }
+      if (matchingPlayers.length) {
+        const playerHeading = selectedTeam ? `Players on ${selectedTeam.name}` : 'Players';
+        appendHeading(`${playerHeading}${matchBatters(pool, query).length > matchingPlayers.length ? ' (top 12)' : ''}`);
+        matchingPlayers.forEach(batter => {
+          const detail = [batter.team, batter.number ? `#${batter.number}` : ''].filter(Boolean).join(' · ');
+          appendOption({ kind: 'player', batter }, index++, batter.name, detail);
+        });
+      }
+      if (!matchingScopes.length && !matchingPlayers.length) {
+        menuEl.appendChild(createElement('div', { style: { padding: '12px', color: '#64748b' } }, 'No matching teams or players.'));
+      }
     };
 
-    const listEl = createElement('div', {
-      id: 'batter-list',
-      style: { maxWidth: '620px', margin: '0 auto', textAlign: 'left', background: 'white', border: '1px solid #e9ecef', borderRadius: '12px', overflow: 'hidden', maxHeight: '58vh', overflowY: 'auto' }
-    }, ...buildRows(this.batterQuery));
-
-    const refreshList = () => {
-      const l = document.getElementById('batter-list');
-      if (l) { l.innerHTML = ''; buildRows(this.batterQuery).forEach(r => l.appendChild(r)); }
-      const c = document.getElementById('batter-count');
-      if (c) c.textContent = `${matchBatters(pool, this.batterQuery).length} shown`;
-    };
-
-    const searchEl = createElement('input', {
-      id: 'batterSearch', type: 'search', value: this.batterQuery || '',
-      placeholder: 'Search name, team or number…',
-      style: { width: '100%', maxWidth: '620px', margin: '0 auto 10px', display: 'block', boxSizing: 'border-box', padding: '12px 14px', fontSize: '15px', border: '1px solid #cbd5e1', borderRadius: '10px' },
-      oninput: (e) => { this.batterQuery = e.target.value; refreshList(); }
+    searchEl = createElement('input', {
+      id: 'batterSearch', type: 'search', role: 'combobox', 'aria-autocomplete': 'list',
+      'aria-controls': 'batter-suggestions', 'aria-expanded': 'false', autocomplete: 'off',
+      value: this.batterQuery || '', placeholder: 'Search players or teams...',
+      style: { width: '100%', boxSizing: 'border-box', padding: '12px 14px', fontSize: '15px', border: '1px solid #cbd5e1', borderRadius: '8px' },
+      oninput: (event) => {
+        this.batterQuery = event.target.value;
+        activeIndex = -1;
+        updateCount();
+        renderOptions(true);
+        searchEl.setAttribute('aria-expanded', 'true');
+      },
+      onfocus: () => { renderOptions(true); searchEl.setAttribute('aria-expanded', 'true'); },
+      onblur: () => setTimeout(() => {
+        menuOpen = false;
+        menuEl.hidden = true;
+        searchEl.setAttribute('aria-expanded', 'false');
+        searchEl.removeAttribute('aria-activedescendant');
+      }, 100),
+      onkeydown: (event) => {
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+          event.preventDefault();
+          if (!menuOpen) renderOptions(true);
+          const direction = event.key === 'ArrowDown' ? 1 : -1;
+          activeIndex = activeOptions.length ? (activeIndex + direction + activeOptions.length) % activeOptions.length : -1;
+          renderOptions(true);
+          if (activeIndex >= 0) searchEl.setAttribute('aria-activedescendant', `batter-option-${activeIndex}`);
+        } else if (event.key === 'Enter' && menuOpen && activeIndex >= 0) {
+          event.preventDefault();
+          choose(activeOptions[activeIndex]);
+        } else if (event.key === 'Escape') {
+          renderOptions(false);
+          searchEl.setAttribute('aria-expanded', 'false');
+        }
+      }
     });
-
-    // Team selector. Only meaningful once rosters have loaded, so it is omitted
-    // entirely when iScore is unreachable rather than shown empty.
-    const teamSelect = ROSTERS.length === 0 ? null : createElement('select', {
-      id: 'batterTeam',
-      style: { width: '100%', maxWidth: '620px', margin: '0 auto 10px', display: 'block', boxSizing: 'border-box', padding: '11px 14px', fontSize: '15px', border: '1px solid #cbd5e1', borderRadius: '10px', background: 'white', color: '#1e293b' },
-      onchange: (e) => { this.batterScope = e.target.value; this.render(); }
-    },
-      createElement('option', { value: '', ...(scope === '' ? { selected: 'selected' } : {}) },
-        `All teams — ${ROSTERS.reduce((n, t) => n + t.batters.length, 0)} hitters`),
-      ...ROSTERS.map(t => createElement('option',
-        { value: t.guid, ...(scope === t.guid ? { selected: 'selected' } : {}) },
-        `${t.name} (${t.batters.length})`)),
-      createElement('option', { value: 'ALL', ...(scope === 'ALL' ? { selected: 'selected' } : {}) },
-        `Everyone in SLUGGER (${BATTERS_INDEX.length}) — includes players with no current club`)
-    );
+    menuEl = createElement('div', {
+      id: 'batter-suggestions', role: 'listbox', hidden: true,
+      style: { position: 'absolute', zIndex: '20', top: 'calc(100% + 4px)', left: '0', right: '0', maxHeight: '55vh', overflowY: 'auto', background: 'white', border: '1px solid #cbd5e1', borderRadius: '8px', boxShadow: '0 8px 20px rgba(15, 23, 42, 0.14)', textAlign: 'left' }
+    });
+    countEl = createElement('span', { className: 'info-bubble', id: 'batter-count' });
+    updateCount();
 
     return createElement('div', { className: 'team-select-screen' },
       createElement('h1', {}, 'Select a Batter'),
       createElement('p', { style: { 'margin-bottom': '14px', fontSize: '15px', color: '#64748b', lineHeight: '1.4' } },
-        'Pick a team to narrow the list, then choose a batter — pitch data is fetched only for the batter you choose.'
+        'Search for a player or team. Pitch data is fetched only for the batter you choose.'
       ),
-      teamSelect,
-      searchEl,
+      createElement('div', { style: { position: 'relative', width: '100%', maxWidth: '620px', margin: '0 auto 12px' } },
+        searchEl,
+        menuEl
+      ),
       createElement('div', { style: { textAlign: 'center', marginBottom: '12px' } },
-        createElement('span', { className: 'info-bubble', id: 'batter-count' }, `${rows.length} shown`)
+        countEl
       ),
-      listEl
     );
   }
 
@@ -1960,7 +2041,7 @@ createElement('div', { style: { flex: 1 } },
                 { label: 'Total Pitches',                   value: rawCount, bg: '#f1f5f9', border: '#cbd5e1', textColor: '#1e293b' },
                 { label: 'Matching Filters',                 value: displayedCount,    bg: '#eff6ff', border: '#93c5fd', textColor: '#1d4ed8', tooltip: 'Pitches currently shown on the grid (limited by Max Pitches Displayed).' },
                 { label: 'Green Zone',  value: displayedGoodCount, bg: '#f0fdf4', border: '#86efac', textColor: '#15803d', tooltip: 'Displayed pitches where the pitcher wins meaningfully more often than his average against this batter.' },
-                { label: 'Red Zone',   value: displayedBadCount,  bg: '#fef2f2', border: '#fca5a5', textColor: '#b91c1c', tooltip: 'Displayed pitches in zones where the batter hits 25%+ above his overall rate.' },
+                { label: 'Red Zone',   value: displayedBadCount,  bg: '#fef2f2', border: '#fca5a5', textColor: '#b91c1c', tooltip: 'Displayed pitches from buckets where the shrunk pitcher-win rate is meaningfully below expectation for this batter and location.' },
               ].map(({ label, value, bg, border, textColor, tooltip }) =>
                 createElement('div', { className: 'stat-pill', ...(tooltip ? { 'data-tooltip': tooltip } : {}), style: { display: 'inline-flex', flexDirection: 'column', alignItems: 'center', background: bg, border: `1px solid ${border}`, borderRadius: '10px', padding: '6px 14px', minWidth: '80px', position: 'relative' } },
                   createElement('span', { style: { fontSize: '18px', fontWeight: '800', color: textColor, lineHeight: '1.1', textAlign: 'center', width: '100%' } }, value),
@@ -1977,7 +2058,7 @@ createElement('div', { style: { flex: 1 } },
               createElement('b', { style: { color: '#15803d' } }, 'green'),
               ' = the pitcher wins more often there than his average vs this batter (attack), ',
               createElement('b', { style: { color: '#b91c1c' } }, 'red'),
-              ' = 25%+ above (avoid), gray = in between or under the minimum sample.'
+              ' = meaningfully below the adjusted expectation (avoid), gray = near expectation or under the minimum sample.'
             ),
             createSlider('Max Pitches Displayed', 'maxPitchesDisplayed', 0, sliderMax, 1, effectiveMaxPitches),
             createSlider('Pitch Circle Size (px)', 'pitchCircleSize', 28, 56, 1),
@@ -2238,9 +2319,9 @@ createElement('div', { style: { flex: 1 } },
                   'Each circle is one pitch, plotted where it crossed the plate. The bordered rectangle is the strike zone, split into the 9 boxes used for bucketing; circles outside it are pitches out of the zone. Pitches are grouped into buckets by pitch FAMILY and zone — Fastball, Breaking or Offspeed (e.g. breaking balls in Low-In) — and each bucket is scored on how often a pitch there went the PITCHER\'s way: a whiff, called strike, foul or out is a win; a hit or a ball is a loss. Green = he wins there more often than his average against this batter (attack). Red = less often (avoid). Gray = near his average. The small L or R shows the pitcher\'s hand; the view is the pitcher\'s perspective.'
                 ),
                 ...makeInfoExpand(
-                  createElement('p', {}, createElement('strong', {}, 'Green:'), ' Pitches here go the pitcher\'s way more often than his average against this batter — attack.'),
-                  createElement('p', {}, createElement('strong', {}, 'Red:'), ' They go his way less often — avoid.'),
-                  createElement('p', {}, createElement('strong', {}, 'Gray:'), ' Near his average, or too small a sample to separate from it.'),
+                  createElement('p', {}, createElement('strong', {}, 'Green:'), ' The sample-adjusted pitcher-win rate is above the expected rate for this batter and location by the selected Color Sensitivity margin — attack.'),
+                  createElement('p', {}, createElement('strong', {}, 'Red:'), ' The sample-adjusted pitcher-win rate is below that location-adjusted expectation by the selected margin — avoid.'),
+                  createElement('p', {}, createElement('strong', {}, 'Gray:'), ' Near the adjusted expectation, or too small a sample to clear the selected margin.'),
                   createElement('p', {}, createElement('strong', {}, 'A ball counts against the pitcher. '), 'That matters most out of the zone, where two buckets can both show zero hits for completely different reasons — he chased and missed, or he simply took it. The first is a put-away pitch, the second is ball one. Scoring only hits could not tell them apart, and rated both "attack".'),
                   createElement('p', {}, createElement('strong', {}, 'In-zone and out-of-zone are scored separately. '), 'About 84% of in-zone pitches go the pitcher\'s way against 27% out of it. Judged on one scale that 57-point gap would swamp everything, so a bucket is only ever compared against this batter\'s own rate in the same regime.'),
                   createElement('p', {}, createElement('strong', {}, 'Small samples are pulled toward his average. '), 'A bucket of three pitches sits essentially on his baseline and stays gray no matter what happened in it; a bucket of a hundred speaks for itself. This is why a lone 2-for-3 no longer paints a zone red.'),
@@ -2276,7 +2357,7 @@ createElement('div', { style: { flex: 1 } },
                   'Locations where the batter struggles most — high whiff rate, weak contact, or excessive fouls. Attack here.'
                 ),
                 ...makeInfoExpand(
-                  createElement('p', {}, 'Each zone gets a vulnerability score from 0 (most vulnerable) to 60 (least) based on whiff rate, weak contact rate, and foul rate.'),
+                  createElement('p', {}, 'Each zone gets a relative vulnerability score based on whiff, weak-contact, and foul rates. Weak-contact data uses only balls in play with recorded exit speed; if a zone has no exit-speed readings, that component is omitted and the remaining weights are rescaled. The card shows swing and exit-speed sample counts.'),
                   createElement('p', {}, 'The ', createElement('strong', {}, 'Vulnerable Zone Min Swings'), ' setting (Analysis Settings → Zone Analysis) controls the minimum sample a zone needs before it can appear here.'),
                   createElement('p', {}, 'When attacking here, stay in the zone — even borderline pitches will produce poor contact.')
                 )
@@ -2292,7 +2373,7 @@ createElement('div', { style: { flex: 1 } },
                   'Where the batter makes hard contact (95+ mph exit velocity). Pitching here is dangerous — stay out.'
                 ),
                 ...makeInfoExpand(
-                  createElement('p', {}, 'A zone qualifies as a Hot Zone when: hard-hit rate exceeds ', createElement('strong', {}, '40%'), ' AND at least ', createElement('strong', {}, '2 hard hits'), ' (95+ mph) have been recorded there.'),
+                  createElement('p', {}, 'A zone qualifies as a Hot Zone when its hard-hit rate among balls in play with recorded exit speed meets the selected threshold, with at least ', createElement('strong', {}, '2 hard hits'), ' (95+ mph). The card shows the tracked exit-speed sample.'),
                   createElement('p', {}, 'These thresholds are adjustable in Analysis Settings → Zone Analysis. Use Hot Zones as a map of where ', createElement('em', {}, 'not'), ' to miss — especially when ahead in the count.')
                 )
               )

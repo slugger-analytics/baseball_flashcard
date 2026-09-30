@@ -108,7 +108,7 @@ test('an over-budget uncached range is clamped AND says so', async () => {
 test('a cached superset is served in full, with no clamp and no notice', async () => {
   // Reading an existing range off disk costs seconds, so there is nothing to clamp.
   fs.mkdirSync(CACHE_DIR, { recursive: true });
-  const seed = path.join(CACHE_DIR, `cache_${REQUESTED_START}_${END}.json`);
+  const seed = path.join(CACHE_DIR, `cache_${REQUESTED_START}_${END}_v2.json`);
   fs.writeFileSync(seed, JSON.stringify(batterPitches(END)));
 
   axios.get = async () => { throw new Error('must not fetch: the range is cached'); };

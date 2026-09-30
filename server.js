@@ -280,12 +280,12 @@ function getTeamName(code) {
  * Returns the disk path for a cached pitch range file.
  */
 function getCachePath(startDate, endDate) {
-  return path.join(CACHE_DIR, `cache_${startDate}_${endDate}.json`);
+  return path.join(CACHE_DIR, `cache_${startDate}_${endDate}_v2.json`);
 }
 
 // Matches whole-range cache files only — cache_batter_* and league_fp_* files
 // have non-date segments where the dates are expected and never match.
-const RANGE_CACHE_RE = /^cache_(\d{4}-\d{2}-\d{2})_(\d{4}-\d{2}-\d{2})\.json$/;
+const RANGE_CACHE_RE = /^cache_(\d{4}-\d{2}-\d{2})_(\d{4}-\d{2}-\d{2})_v2\.json$/;
 
 /**
  * Finds cached range files that exactly tile [startDate, endDate] — each file
@@ -345,7 +345,7 @@ function readDiskCache(filePath) {
 // the whole range) keeps a full-season fetch (~110k+ pitches) far from the Lambda's
 // memory ceiling — the full raw dataset never exists in the heap at once.
 const PITCH_FIELDS = [
-  'date', 'rel_speed', 'release_speed',
+  'game_id', 'date', 'rel_speed', 'release_speed',
   'batter_id', 'batter_team_code', 'pitcher_id',
   'batter_side', 'pitcher_throws',
   'top_or_bottom', 'inning', 'balls', 'strikes', 'pa_of_inning',
@@ -515,7 +515,7 @@ async function fetchPitchesByDateRange(startDateStr, endDateStr) {
  *   batter genuinely has no pitches in the window; an upstream failure throws.
  */
 async function fetchPitchesForBatter(batterId, startDateStr, endDateStr) {
-  const cachePath = path.join(CACHE_DIR, `cache_batter_${batterId}_${startDateStr}_${endDateStr}.json`);
+  const cachePath = path.join(CACHE_DIR, `cache_batter_${batterId}_${startDateStr}_${endDateStr}_v2.json`);
 
   if (fs.existsSync(cachePath)) {
     console.log(`💾 Batter cache hit: ${path.basename(cachePath)}`);
@@ -757,7 +757,10 @@ function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 9
       teamsData[teamName].push(batterData);
     }
 
-    const paKey = `${pitch.inning}_${pitch.pa_of_inning}`;
+    const gameKey = pitch.game_id != null && pitch.game_id !== ''
+      ? `game-${pitch.game_id}`
+      : `date-${pitch.date || 'unknown'}`;
+    const paKey = `${gameKey}_${pitch.top_or_bottom || 'Top'}_${pitch.inning}_${pitch.pa_of_inning}`;
     let currentPA = batterData.plateAppearances.find(pa => pa.key === paKey);
     if (!currentPA) {
       currentPA = { key: paKey, pitches: [], result: null };
@@ -768,8 +771,8 @@ function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 9
     currentPA.pitches.push({ type: pitchType, call: pitch.pitch_call, count: `${pitch.balls}-${pitch.strikes}` });
 
     batterData.stats.totalPitches++;
-    // First-pitch approach uses the pre-pitch count fields (balls===0 && strikes===0),
-    // which route around the cross-game paKey collision entirely.
+    // First-pitch approach uses the pre-pitch count fields directly and does not
+    // depend on plate-appearance grouping.
     if (isZeroZeroPitch(pitch)) {
       batterData._fp.zeroZero++;
       batterData._fp[classifyZeroZeroCall(pitch.pitch_call)]++;
@@ -865,7 +868,7 @@ function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 9
       const zone = getZoneFromLocation(pitch.plate_loc_side, pitch.plate_loc_height, batterData.handedness);
       const pitcherHand = pitch.pitcher_throws === 'Left' ? 'L' : 'R';
       if (!batterData.zoneAnalysis[zone]) {
-        batterData.zoneAnalysis[zone] = { pitches: 0, swings: 0, whiffs: 0, fouls: 0, weakContact: 0, hardHits: 0, contact: 0, calledStrikes: 0, balls: 0, contactOuts: 0, contactHits: 0 };
+        batterData.zoneAnalysis[zone] = { pitches: 0, swings: 0, whiffs: 0, fouls: 0, weakContact: 0, hardHits: 0, contact: 0, ballsInPlay: 0, exitSpeedCount: 0, calledStrikes: 0, balls: 0, contactOuts: 0, contactHits: 0 };
       }
 
       const zoneStats = batterData.zoneAnalysis[zone];
@@ -876,9 +879,14 @@ function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 9
       if (['FoulBall', 'FoulBallFieldable', 'FoulBallNotFieldable', 'InPlay'].includes(pitch.pitch_call)) zoneStats.contact++;
       if (pitch.pitch_call === 'StrikeCalled') zoneStats.calledStrikes++;
       if (pitch.pitch_call === 'BallCalled') zoneStats.balls++;
-      if (pitch.exit_speed && pitch.pitch_call === 'InPlay') {
-        if (pitch.exit_speed >= 95) zoneStats.hardHits++;
-        else if (pitch.exit_speed < 70) zoneStats.weakContact++;
+      if (pitch.pitch_call === 'InPlay') {
+        zoneStats.ballsInPlay++;
+        const exitSpeed = Number(pitch.exit_speed);
+        if (pitch.exit_speed != null && pitch.exit_speed !== '' && Number.isFinite(exitSpeed)) {
+          zoneStats.exitSpeedCount++;
+          if (exitSpeed >= 95) zoneStats.hardHits++;
+          else if (exitSpeed < 70) zoneStats.weakContact++;
+        }
       }
       if (pitch.pitch_call === 'InPlay' && pitch.play_result) {
         if (['Out', 'FieldersChoice', 'Sacrifice'].includes(pitch.play_result)) zoneStats.contactOuts++;

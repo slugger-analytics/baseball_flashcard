@@ -32,6 +32,18 @@ test('only 0-0 pitches count; multi-game same inning/pa both counted (routes aro
   assert.strictEqual(tally.taken, 0);
 });
 
+test('first-pitch tally ignores records with null pre-pitch counts', () => {
+  const tally = firstPitchTally([
+    p('BallCalled', null, 0),
+    p('StrikeCalled', null, 0),
+    p('InPlay', 0, null),
+    p('StrikeSwinging', null, null),
+  ]);
+  assert.strictEqual(tally.zeroZero, 0);
+  assert.strictEqual(tally.swung, 0);
+  assert.strictEqual(tally.taken, 0);
+});
+
 test('poolLeagueFirstPitch pools across batters (not a mean of batters)', () => {
   const b1 = [p('InPlay'), p('BallCalled')];
   const b2 = [p('StrikeSwinging'), p('StrikeCalled')];

@@ -15,7 +15,7 @@ const app = require('../server.js');
 const BATTER_ID = 'velo-test-0001';
 const START = '2026-05-01';
 const END = '2026-05-02';
-const SEED_FILE = path.join(CACHE_DIR, `cache_batter_${BATTER_ID}_${START}_${END}.json`);
+const SEED_FILE = path.join(CACHE_DIR, `cache_batter_${BATTER_ID}_${START}_${END}_v2.json`);
 
 function mkPitch(relSpeed) {
   return {

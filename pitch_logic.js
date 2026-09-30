@@ -488,6 +488,40 @@ function interleave(reds, greens) {
   return out;
 }
 
+function meetsZoneSwingMinimum(zoneStats, minSwings) {
+  return Boolean(zoneStats) && (zoneStats.swings || 0) >= minSwings;
+}
+
+function meetsHotZoneThreshold(hardHitPercent, hardHits, minHardHitPercent, minHardHits) {
+  return Number.isFinite(hardHitPercent) && hardHitPercent >= minHardHitPercent && hardHits >= minHardHits;
+}
+
+function zoneContactRates(zoneStats) {
+  const exitSpeedCount = zoneStats.exitSpeedCount || 0;
+  return {
+    hardHitPercent: exitSpeedCount ? (zoneStats.hardHits / exitSpeedCount) * 100 : null,
+    weakContactPercent: exitSpeedCount ? (zoneStats.weakContact / exitSpeedCount) * 100 : null,
+    exitSpeedCount,
+  };
+}
+
+function rankZoneValues(zoneValues) {
+  const ordered = Object.entries(zoneValues)
+    .filter(([, value]) => Number.isFinite(value))
+    .sort((a, b) => b[1] - a[1]);
+  const ranks = {};
+  let start = 0;
+  while (start < ordered.length) {
+    let end = start + 1;
+    while (end < ordered.length && Math.abs(ordered[end][1] - ordered[start][1]) < 0.0001) end++;
+    const averageIndex = (start + end - 1) / 2;
+    const rank = ordered.length === 1 ? 50 : (averageIndex / (ordered.length - 1)) * 100;
+    for (let index = start; index < end; index++) ranks[ordered[index][0]] = rank;
+    start = end;
+  }
+  return ranks;
+}
+
 /**
  * Resolves the circle color mode ('both' | 'green' | 'red'), gracefully migrating
  * the legacy showOnlyGoodPitches / showOnlyBadPitches booleans if they are the
@@ -709,6 +743,10 @@ if (typeof module !== 'undefined' && module.exports) {
     resolveSettings,
     bucketKey,
     interleave,
+    meetsZoneSwingMinimum,
+    meetsHotZoneThreshold,
+    zoneContactRates,
+    rankZoneValues,
     computeBucketRatings,
     getVisiblePitches,
     planRangeChunks,

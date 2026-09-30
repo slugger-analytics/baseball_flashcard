@@ -139,8 +139,8 @@ test('a wide range tiled by cached windows is assembled without a fetch or a cla
   // so it must be served in full, from disk, with no upstream call and no notice.
   const START = isoOffset(-104), MID = isoOffset(-55), MID1 = isoOffset(-54), END = isoOffset(-5);
   fs.mkdirSync(CACHE_DIR, { recursive: true });
-  fs.writeFileSync(path.join(CACHE_DIR, `cache_${START}_${MID}.json`), JSON.stringify(twoTeamPitches(MID)));
-  fs.writeFileSync(path.join(CACHE_DIR, `cache_${MID1}_${END}.json`), JSON.stringify(twoTeamPitches(END)));
+  fs.writeFileSync(path.join(CACHE_DIR, `cache_${START}_${MID}_v2.json`), JSON.stringify(twoTeamPitches(MID)));
+  fs.writeFileSync(path.join(CACHE_DIR, `cache_${MID1}_${END}_v2.json`), JSON.stringify(twoTeamPitches(END)));
 
   axios.get = async () => { throw new Error('must not fetch: the range is tiled by cached windows'); };
 

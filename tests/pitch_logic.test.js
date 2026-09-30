@@ -4,9 +4,41 @@ const assert = require('node:assert');
 const {
   computeBucketRatings, getVisiblePitches, bucketKey,
   bandMissDescription, getZoneFromLocation,
+  meetsZoneSwingMinimum, meetsHotZoneThreshold, zoneContactRates, rankZoneValues,
 } = require('../pitch_logic.js');
 
 const { finishBand } = require('../lib/stats.js');
+
+test('vulnerable-zone minimum is based on swings, not total pitches', () => {
+  assert.strictEqual(meetsZoneSwingMinimum({ pitches: 20, swings: 2 }, 3), false);
+  assert.strictEqual(meetsZoneSwingMinimum({ pitches: 3, swings: 3 }, 3), true);
+  assert.strictEqual(meetsZoneSwingMinimum({ pitches: 10, swings: 0 }, 1), false);
+});
+
+test('hot-zone cutoff compares hard-hit percentage and minimum hard-hit count', () => {
+  assert.strictEqual(meetsHotZoneThreshold(39, 4, 40, 2), false);
+  assert.strictEqual(meetsHotZoneThreshold(40, 2, 40, 2), true);
+  assert.strictEqual(meetsHotZoneThreshold(80, 1, 40, 2), false);
+});
+
+test('zone contact rates use only batted balls with recorded exit speed', () => {
+  assert.deepStrictEqual(zoneContactRates({
+    contact: 10, ballsInPlay: 4, exitSpeedCount: 2, hardHits: 1, weakContact: 1,
+  }), { hardHitPercent: 50, weakContactPercent: 50, exitSpeedCount: 2 });
+  assert.deepStrictEqual(zoneContactRates({
+    contact: 3, ballsInPlay: 1, exitSpeedCount: 0, hardHits: 0, weakContact: 0,
+  }), { hardHitPercent: null, weakContactPercent: null, exitSpeedCount: 0 });
+  assert.strictEqual(meetsHotZoneThreshold(null, 0, 0, 0), false);
+});
+
+test('zone ranking gives tied rates their average rank', () => {
+  const ranks = rankZoneValues({ topA: 90, topB: 90, bottom: 10 });
+  assert.strictEqual(ranks.topA, 25);
+  assert.strictEqual(ranks.topB, 25);
+  assert.strictEqual(ranks.bottom, 100);
+  assert.deepStrictEqual(rankZoneValues({ a: 50, b: 50, c: 50 }), { a: 50, b: 50, c: 50 });
+  assert.deepStrictEqual(rankZoneValues({ measured: 70, missing: null }), { measured: 50 });
+});
 
 test('bandMissDescription names the miss direction implied by the band', () => {
   // Outer/inner thirds: the pitch really was off the plate.
