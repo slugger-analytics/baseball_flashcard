@@ -245,8 +245,7 @@ app.get('/api/cache-status', (req, res) => {
     teams: lookupCache.teams.size,
     ballparks: lookupCache.ballparks.size,
     samplePlayer: Array.from(lookupCache.players.keys())[0] || null,
-    apiKeyConfigured: !!process.env.SLUGGER_API_KEY,
-    apiKeyPrefix: process.env.SLUGGER_API_KEY ? process.env.SLUGGER_API_KEY.substring(0, 10) + '...' : 'missing'
+    apiKeyConfigured: !!process.env.SLUGGER_API_KEY
   });
 });
 
@@ -850,8 +849,10 @@ function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 9
       const strikeoutPitch = currentPA.pitches[currentPA.pitches.length - 1];
       const setupPitch = currentPA.pitches.length >= 2 ? currentPA.pitches[currentPA.pitches.length - 2] : null;
 
-      const zone = pitch.plate_loc_side !== null && pitch.plate_loc_height !== null
-        ? getZoneFromLocation(pitch.plate_loc_side, pitch.plate_loc_height, batterData.handedness)
+      const strikeoutSide = plateCoordinate(pitch.plate_loc_side);
+      const strikeoutHeight = plateCoordinate(pitch.plate_loc_height);
+      const zone = strikeoutSide !== null && strikeoutHeight !== null
+        ? getZoneFromLocation(strikeoutSide, strikeoutHeight, batterData.handedness)
         : 'Unknown';
 
       batterData.strikeoutDetails.push({
@@ -864,8 +865,10 @@ function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 9
       });
     }
 
-    if (pitch.plate_loc_side !== null && pitch.plate_loc_height !== null) {
-      const zone = getZoneFromLocation(pitch.plate_loc_side, pitch.plate_loc_height, batterData.handedness);
+    const zoneAnalysisSide = plateCoordinate(pitch.plate_loc_side);
+    const zoneAnalysisHeight = plateCoordinate(pitch.plate_loc_height);
+    if (zoneAnalysisSide !== null && zoneAnalysisHeight !== null) {
+      const zone = getZoneFromLocation(zoneAnalysisSide, zoneAnalysisHeight, batterData.handedness);
       const pitcherHand = pitch.pitcher_throws === 'Left' ? 'L' : 'R';
       if (!batterData.zoneAnalysis[zone]) {
         batterData.zoneAnalysis[zone] = { pitches: 0, swings: 0, whiffs: 0, fouls: 0, weakContact: 0, hardHits: 0, contact: 0, ballsInPlay: 0, exitSpeedCount: 0, calledStrikes: 0, balls: 0, contactOuts: 0, contactHits: 0 };
@@ -896,7 +899,7 @@ function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 9
       // Pitcher's perspective: the batter silhouette flanks the zone as the
       // pitcher sees it (LHB left of the zone, RHB right). plateToPercent owns
       // the projection and shares its geometry with the drawn strike zone.
-      const position = plateToPercent(pitch.plate_loc_side, pitch.plate_loc_height);
+      const position = plateToPercent(zoneAnalysisSide, zoneAnalysisHeight);
 
       // Single-word outcome per pitch so the frontend can bucket pitches any
       // way it likes (pitch type × zone × pitcher hand) and derive hit rates.
@@ -1711,12 +1714,35 @@ function calculateMinPitches(confidenceThreshold) {
 app.get('/api/generate-report', async (req, res) => {
   try {
     const { startDate, endDate, maxVelocity, confidenceThreshold, selectedTeam, selectedBatter } = req.query;
-    
-    // fetch the data first
-    const formattedStart = formatDateForApi(startDate);
-    const formattedEnd = formatDateForApi(endDate);
-    
-    const pitches = await fetchPitchesByDateRange(formattedStart, formattedEnd);
+
+    // Same validation/season-default/future-date rules as /api/teams/range and
+    // /api/batter/card — this endpoint used to skip them and just pass raw
+    // strings straight through, so a missing date became a literal "null" in
+    // the cache filename and in the request sent upstream.
+    const range = resolveDateRange(startDate, endDate);
+    if (range.error) {
+      return res.status(range.status).json({ error: range.error, message: range.message });
+    }
+    let { finalStartDate, finalEndDate } = range;
+
+    // Same over-budget clamp as /api/teams/range: an uncached range wider than
+    // MAX_UNCACHED_RANGE_DAYS can run past the Lambda timeout, so clamp it to
+    // the most recent window instead of letting the request hang and 502.
+    const requestedStartDate = finalStartDate;
+    let clampNotice = null;
+    if (spanDays(finalStartDate, finalEndDate) > MAX_UNCACHED_RANGE_DAYS &&
+        !fs.existsSync(getCachePath(finalStartDate, finalEndDate)) &&
+        !findCachedChain(finalStartDate, finalEndDate)) {
+      const clampedStart = new Date(`${finalEndDate}T00:00:00Z`);
+      clampedStart.setUTCDate(clampedStart.getUTCDate() - MAX_UNCACHED_RANGE_DAYS);
+      finalStartDate = clampedStart.toISOString().slice(0, 10);
+      clampNotice = `Requested ${requestedStartDate} through ${finalEndDate} ` +
+        `(${spanDays(requestedStartDate, finalEndDate)} days). Served the most recent ` +
+        `${MAX_UNCACHED_RANGE_DAYS} days (${finalStartDate} through ${finalEndDate}) — ` +
+        `wider uncached ranges exceed the request budget.`;
+    }
+
+    const pitches = await fetchPitchesByDateRange(finalStartDate, finalEndDate);
     const parsedMaxVelocity = maxVelocity ? parseFloat(maxVelocity) : 999;
     const teamsData = transformPitchDataToTeams(pitches, {}, parsedMaxVelocity);
     
@@ -1736,7 +1762,8 @@ app.get('/api/generate-report', async (req, res) => {
     const reportData = {
       metadata: {
         generatedAt: new Date().toISOString(),
-        dateRange: { start: startDate, end: endDate },
+        dateRange: { start: finalStartDate, end: finalEndDate },
+        ...(clampNotice ? { requestedStartDate, clampedTo: MAX_UNCACHED_RANGE_DAYS, partial: true, notice: clampNotice } : {}),
         velocityRange: maxVelocity ? `≤ ${maxVelocity} mph` : 'All velocities',
         confidenceThreshold: confidenceThreshold || 'Not applied',
         selectedBatter: selectedBatter || 'All batters',
@@ -1761,21 +1788,6 @@ app.get('/api/generate-report', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-
-/**
- * Normalizes a date string to ISO format (YYYY-MM-DD).
- * Accepts either YYYY-MM-DD (passed through) or compact YYYYMMDD (converted).
- * @param {string|null} dateStr - Input date string.
- * @returns {string|null} ISO-formatted date string, or null if input is falsy.
- */
-function formatDateForApi(dateStr) {
-  if (!dateStr) return null;
-  if (dateStr.includes('-')) return dateStr;
-  if (dateStr.length === 8) {
-    return `${dateStr.substring(0, 4)}-${dateStr.substring(4, 6)}-${dateStr.substring(6, 8)}`;
-  }
-  return dateStr;
-}
 
 /**
  * Normalizes and validates a requested date range, falling back to season defaults.
