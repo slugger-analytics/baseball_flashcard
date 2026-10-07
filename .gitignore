@@ -1,7 +1,14 @@
 node_modules/
 
+# Local secrets — never commit. See .env.example for the keys this expects.
 .env
 
-node_modules/
+# Build / deploy artefacts
 .vercel
+
+# Pitch, roster and league-baseline caches are derived data, rebuilt on demand.
 cache/
+
+# macOS Finder metadata: per-user, per-machine, binary, and rewritten whenever the
+# folder is opened. Already excluded from the Docker image via .dockerignore.
+.DS_Store
