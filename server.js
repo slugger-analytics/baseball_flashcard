@@ -17,10 +17,13 @@ const { buildRosters } = require('./lib/iscore.js');
 // the grid the client draws are guaranteed to describe the same rectangle.
 const { getZoneFromLocation, plateToPercent } = require('./pitch_logic.js');
 
-// Vercel's and Lambda's filesystems are read-only except /tmp; use /tmp there, local cache/ elsewhere.
-// CACHE_DIR overrides both — tests run in parallel processes and need disjoint dirs.
+// Lambda's filesystem is read-only except /tmp; use /tmp there, local cache/
+// elsewhere. Note /tmp lives and dies with the execution container, so a cold
+// start rebuilds every cache. CACHE_DIR overrides both — tests run in parallel
+// processes and need disjoint dirs, and pointing it at a mount would make the
+// caches survive a recycle.
 const CACHE_DIR = process.env.CACHE_DIR
-  || ((process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME)
+  || (process.env.AWS_LAMBDA_FUNCTION_NAME
     ? '/tmp/cache'
     : path.join(__dirname, 'cache'));
 if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
@@ -1924,7 +1927,7 @@ const rostersHandler = async (req, res) => {
 
 const battersHandler = async (req, res) => {
   try {
-    // On Vercel the lookup cache warms in the background; build it on demand if empty.
+    // A cold container starts with an empty lookup cache; build it on demand.
     if (lookupCache.players.size === 0) {
       await populateLookupCaches();
     }
@@ -2074,13 +2077,6 @@ async function startServer() {
   app.listen(PORT, () => {
     console.log(`✅ Server running on http://localhost:${PORT}/\n`);
   });
-}
-
-if (process.env.VERCEL) {
-  setTimeout(() => {
-    console.log('Background cache population started...');
-    populateLookupCaches().catch(console.error);
-  }, 1000);
 }
 
 module.exports = app;

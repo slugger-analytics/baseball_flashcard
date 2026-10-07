@@ -3,9 +3,6 @@ node_modules/
 # Local secrets — never commit. See .env.example for the keys this expects.
 .env
 
-# Build / deploy artefacts
-.vercel
-
 # Pitch, roster and league-baseline caches are derived data, rebuilt on demand.
 cache/
 

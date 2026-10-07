@@ -1,5 +1,5 @@
 **Live deployment (prod):** https://slugger-alb-1518464736.us-east-2.elb.amazonaws.com/widgets/flashcard/ — AWS Lambda behind the shared slugger ALB, auto-deployed by the `Flashcard Deploy` workflow on every push to `main`. Static frontend mirror: https://slugger-analytics.github.io/baseball_flashcard/
-> The old Vercel deployment (slugger-baseball-flashcard.vercel.app) is LEGACY/stale — do not use it to judge what's live. The CI workflow's Vercel deploy job stays skipped unless the Vercel secrets are configured.
+> A Vercel deployment (slugger-baseball-flashcard.vercel.app) existed previously and is dead. Its config and the dormant CI deploy job have been removed; AWS Lambda is the only deployment path.
 
 ---
 
@@ -85,7 +85,7 @@ SLUGGER API (AWS API Gateway → Trackman pitch data)
 
 **Data flow:**
 1. The browser sends a date range query to the Express server.
-2. `server.js` checks a disk-backed streaming cache (`/tmp/cache` on Vercel, `./cache/` locally). On a cache miss it pages through the SLUGGER `/pitches` endpoint, collecting all pitch records for the range.
+2. `server.js` checks a disk-backed streaming cache (`/tmp/cache` on Lambda, `./cache/` locally). On a cache miss it pages through the SLUGGER `/pitches` endpoint, collecting all pitch records for the range.
 3. Raw pitches are aggregated per-batter into zone stats, tendency metrics, and sequence data, then written to the cache as JSON and streamed back to the browser.
 4. The browser computes weakness zones client-side (or re-requests them via `/api/weakness-zones`) and renders the flashcard UI.
 
@@ -220,9 +220,8 @@ BIS ±15° pull/opposite-field boundaries, with handedness flip applied (pull si
 |---|---|
 | `.env.example` | Template for required environment variables (copy to `.env`) |
 | `package.json` | Node dependencies and npm scripts |
-| `vercel.json` | Vercel serverless deployment config |
-| `Dockerfile` | Container config for non-Vercel deployments |
-| `.dockerignore` / `.gitignore` / `.vercelignore` | Ignore rules |
+| `Dockerfile` | Container config for the AWS Lambda deployment |
+| `.dockerignore` / `.gitignore` | Ignore rules |
 
 ### Research & utilities
 
@@ -272,14 +271,22 @@ Generates a full printable report for a specific batter.
 
 ---
 
-## Deployment (Vercel)
+## Deployment
 
-The app is configured for Vercel serverless deployment via `vercel.json`. The key constraint is that Vercel's filesystem is read-only except `/tmp` — the server automatically uses `/tmp/cache` when the `VERCEL` environment variable is set (Vercel injects this automatically).
+A push to `main` triggers `.github/workflows/deploy.yml` ("Flashcard Deploy"), which
+builds an arm64 container (Dockerfile + Lambda Web Adapter), pushes it to ECR, and
+updates the `widget-flashcard` Lambda behind the shared `slugger-alb` at
+`/widgets/flashcard/*`. Auth is GitHub OIDC — no static AWS keys.
 
-Set the following environment variable in Vercel project settings:
-- `SLUGGER_API_KEY` — your API key
+`SLUGGER_API_KEY` is **not** passed by the workflow; it lives in the Lambda
+function's own environment configuration. Rotating the key means updating it there
+as well as locally, or production will start failing upstream calls while local
+development keeps working.
 
-Push to `main` to trigger a production deploy.
+The one filesystem constraint: Lambda's disk is read-only except `/tmp`, so
+`CACHE_DIR` resolves to `/tmp/cache` there. That directory lives and dies with the
+execution container, so a cold start rebuilds the pitch, roster and league-baseline
+caches. Set `CACHE_DIR` to a persistent mount if that ever matters.
 
 ---
 
@@ -288,21 +295,8 @@ Push to `main` to trigger a production deploy.
 GitHub Actions (`.github/workflows/ci.yml`) runs on every push and pull request:
 
 - **checks** — `npm ci`, `node --check` on `server.js` and `app.js`, then `npm test` (`test_smoke.js`), which boots the server **without any secrets** and asserts the static `index.html` serves, the health endpoints answer, and `/api/batter/card` fails gracefully (400/404) when misused. No `SLUGGER_API_KEY` is needed for CI to pass.
-- **deploy** — on pushes to `main` only, after checks pass, deploys to Vercel production via `npx vercel deploy --prod`. Until the secrets below exist, this job logs `VERCEL_TOKEN not set — skipping deploy` and does nothing.
 
-(The AWS Lambda pipeline in `.github/workflows/deploy.yml` is separate and continues to deploy `www.alpb-analytics.com/widgets/flashcard` on pushes to `main`.)
-
-### Activating Vercel auto-deploy
-
-Someone with access to the Vercel account that owns the `slugger-baseball-flashcard` project must add three **repository secrets** (GitHub → Settings → Secrets and variables → Actions):
-
-| Secret | Where to get it |
-|---|---|
-| `VERCEL_TOKEN` | vercel.com → Account Settings → Tokens → Create |
-| `VERCEL_ORG_ID` | `npx vercel link` then read `.vercel/project.json` (`orgId`), or Vercel dashboard → Team/Account Settings → General |
-| `VERCEL_PROJECT_ID` | Same `.vercel/project.json` (`projectId`), or `npx vercel project inspect slugger-baseball-flashcard`, or project Settings → General |
-
-Once all three are set, the next push to `main` deploys to production automatically. Remember the project itself still needs `SLUGGER_API_KEY` set in its Vercel environment variables.
+`ci.yml` runs checks only — deployment is `deploy.yml` (see **Deployment** above).
 
 ---
 
@@ -315,7 +309,7 @@ Pitch data lives behind the SLUGGER API (ALPB + Trackman). A valid `SLUGGER_API_
 ## Known Issues & Limitations
 
 - **ALPB 2026 season calendar** is hardcoded (April 21 – September 13). Update the calendar constants in `server.js` at the start of each new season.
-- **Cache invalidation** is date-range-keyed and versioned. Current `_v2` pitch caches retain the upstream `game_id`; older cache files are ignored. If the underlying data changes for a date range already cached, delete the relevant current-version file from `cache/` (local) or redeploy (Vercel `/tmp` is ephemeral).
+- **Cache invalidation** is date-range-keyed and versioned. Current `_v2` pitch caches retain the upstream `game_id`; older cache files are ignored. If the underlying data changes for a date range already cached, delete the relevant current-version file from `cache/` (local) or redeploy (Lambda `/tmp` is ephemeral).
 - **Analysis calibration** requires a time-ordered historical holdout. Raw pitch data is not committed, so do not adjust model constants using only unit-test fixtures or evaluate on the same games used to fit them.
 - **Large date ranges** can be slow on first load (cold cache) due to paginated API fetching; subsequent loads for the same range are fast.
 
