@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert');
-const { getVisiblePitches, bucketKey } = require('../pitch_logic.js');
+const { getVisiblePitches, bucketKey } = require('../public/js/pitch_logic.js');
 
 // Buckets are (pitch family x zone): the first arg names the ZONE, so each
 // fixture bucket stays distinct.
@@ -71,7 +71,7 @@ test('a ball counts against the pitcher — the bug that made chase zones green'
 });
 
 test('chase splits into edge and deep, so corners are judged against corners', () => {
-  const { zoneRegime } = require('../pitch_logic.js');
+  const { zoneRegime } = require('../public/js/pitch_logic.js');
   // One axis outside -> just off the plate.
   ['Chase Mid-Out', 'Chase Mid-In', 'Chase High-Mid', 'Chase Low-Mid']
     .forEach(z => assert.strictEqual(zoneRegime(z), 'edge', z));
@@ -82,7 +82,7 @@ test('chase splits into edge and deep, so corners are judged against corners', (
 });
 
 test('"everything is a ball out there" is not batter-specific, so it stays gray', () => {
-  const { getVisiblePitches: gvp, bucketKey: bk } = require('../pitch_logic.js');
+  const { getVisiblePitches: gvp, bucketKey: bk } = require('../public/js/pitch_logic.js');
   const mk = (zone, n, wins) => Array.from({ length: n }, (_, i) =>
     ({ pitch: '4S', zone, outcome: i < wins ? 'whiff' : 'ball', pitcherThrows: 'R', position: [50, 50] }));
   const base = { bucketMinPitches: 3, hiddenPitchTypes: [], pitcherHandFilter: 'All',
@@ -113,7 +113,7 @@ test('"everything is a ball out there" is not batter-specific, so it stays gray'
 });
 
 test('the zone offset corrects for how hard a spot is league-wide', () => {
-  const { expectedWinRate, ZONE_LEAGUE_OFFSET } = require('../pitch_logic.js');
+  const { expectedWinRate, ZONE_LEAGUE_OFFSET } = require('../public/js/pitch_logic.js');
   // Chase High-Out is the deadest spot on the plate; Chase Mid-In the most chased.
   assert.ok(ZONE_LEAGUE_OFFSET['Chase High-Out'] < 0);
   assert.ok(ZONE_LEAGUE_OFFSET['Chase Mid-In'] > 0);

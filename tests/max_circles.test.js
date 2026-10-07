@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert');
-const { getVisiblePitches } = require('../pitch_logic.js');
+const { getVisiblePitches } = require('../public/js/pitch_logic.js');
 
 // Buckets are (pitch family x zone): distinct buckets come from distinct zones.
 // `wins` pitches go the pitcher's way (whiff), the rest the batter's (hit).

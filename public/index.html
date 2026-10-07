@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SLUGGER Batter Flashcard Widget</title>
+    <link rel="stylesheet" href="./styles.css?v=5" />
+  </head>
+  <body>
+    <div id="toolbar"></div>
+    <div id="app"></div>
+    <!-- Plain scripts, no build step: order matters. pitch_logic.js is shared with
+         the server; core.js holds client state; features/ draw the card sections;
+         app.js defines FlashcardApp and the next four files add its methods. -->
+    <script src="./js/pitch_logic.js?v=8"></script>
+    <script src="./js/core.js?v=1"></script>
+    <script src="./js/features/zone.js?v=1"></script>
+    <script src="./js/features/arsenal.js?v=1"></script>
+    <script src="./js/features/tendencies.js?v=1"></script>
+    <script src="./js/features/guide.js?v=1"></script>
+    <script src="./js/app.js?v=16"></script>
+    <script src="./js/toolbar.js?v=1"></script>
+    <script src="./js/card.js?v=1"></script>
+    <script src="./js/settings.js?v=1"></script>
+    <script src="./js/print.js?v=1"></script>
+    <script src="./js/main.js?v=1"></script>
+  </body>
+</html>

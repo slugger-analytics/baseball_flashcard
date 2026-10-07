@@ -13,14 +13,16 @@ A web application that generates cognitively-optimized scouting flashcards for A
 
 ## What It Does
 
-The widget pulls pitch-level data from the SLUGGER API for a user-specified date range and transforms it into batter profiles that highlight key weaknesses. Users can filter by:
+The widget turns a hitter's Trackman pitch data into a one-page plan for pitching to him. Everything is driven from one toolbar:
 
-- **Date range** — focus on recent form or a full season
-- **Max velocity** — only see results for pitches within a pitcher's own velocity range
-- **Pitch group** — filter by fastballs, breaking balls, or offspeed pitches
-- **Confidence threshold** — control how selectively weaknesses are surfaced (higher = fewer, more reliable zones)
+- **Team** — an iScore club (active roster), all rostered hitters, or everyone in SLUGGER
+- **Hitter** — search by either name order, club or jersey number; ‹ › (or the arrow keys) step through the team
+- **Dates** — the season (default), last 30 / last 14 days of games, or a custom range; remembered per browser
+- **Print card** / **Print team** — one page for this hitter, or one page per hitter on the selected club, for the chosen dates
 
-For each batter, the widget surfaces: whiff rate, foul rate, weak contact rate, first-pitch aggression, spray tendency, steal threat, bunt threat, and the pitch sequences most likely to produce outs. A one-page printable report can be generated for dugout use.
+Max velocity and pitch group (fastballs / breaking / offspeed) live in the settings panel and reload the card.
+
+For each hitter the card shows the strike zone with pitcher-win ratings by pitch family, how he handles each pitch, first-pitch approach, vulnerable and hot zones, the sequence that gets him out, and steal / bunt / spray tendencies.
 
 ---
 
@@ -76,7 +78,7 @@ npm run dev
 The app uses a three-tier architecture:
 
 ```
-Browser (index.html + pitch_logic.js + app.js)
+Browser (public/: index.html + js/*.js, plain scripts, no build step)
     ↕  JSON over HTTP
 Express Middleware Server (server.js)
     ↕  REST + x-api-key
@@ -84,26 +86,20 @@ SLUGGER API (AWS API Gateway → Trackman pitch data)
 ```
 
 **Data flow:**
-1. The browser sends a date range query to the Express server.
-2. `server.js` checks a disk-backed streaming cache (`/tmp/cache` on Lambda, `./cache/` locally). On a cache miss it pages through the SLUGGER `/pitches` endpoint, collecting all pitch records for the range.
-3. Raw pitches are aggregated per-batter into zone stats, tendency metrics, and sequence data, then written to the cache as JSON and streamed back to the browser.
-4. The browser computes weakness zones client-side (or re-requests them via `/api/weakness-zones`) and renders the flashcard UI.
+1. The browser asks for one batter's card (`/api/batter/card`) for a date range.
+2. `lib/pitch_cache.js` checks a disk-backed streaming cache (`/tmp/cache` on Lambda, `./cache/` locally). On a miss, `lib/slugger.js` pages through the SLUGGER `/pitches` endpoint filtered to that batter.
+3. `lib/transform.js` aggregates the pitches into zone stats, tendencies (`lib/tendencies.js`) and sequence data, and packs the per-pitch dots into a columnar wire format.
+4. The browser rates each (pitch family × zone) bucket with `public/js/pitch_logic.js` and renders the flashcard.
 
-**Key server functions in `server.js`:**
-
-| Function | What it does |
-|---|---|
-| `fetchPitchesByDateRange` | Cache-aware entry point for pitch data retrieval |
-| `readDiskCache` / `writeDiskCache` | Stream-JSON-backed disk cache (avoids loading large files into memory at once) |
-| `aggregatePitches` | Converts raw pitch records into per-batter stats |
-| `computeWeaknessZones` | Ranks the 3×3 strike zone grid by composite score (whiff%, weak%, chase/foul%) |
+**Server layout:** `server.js` only sets up Express and mounts `routes/`. Each file in
+`routes/` is one endpoint group and stays thin; the work lives in `lib/`.
 
 ---
 
 ## Key Algorithms
 
 ### Zone Labelling
-The strike zone is defined in `pitch_logic.js` (`STRIKE_ZONE`) as ±0.833 ft horizontally
+The strike zone is defined in `public/js/pitch_logic.js` (`STRIKE_ZONE`) as ±0.833 ft horizontally
 and 1.5–3.5 ft vertically, and is split into nine equal boxes — `High-In` … `Low-Out`.
 Pitches outside the zone are labelled by how they missed and prefixed `Chase `
 (e.g. `Chase Low-Out`), so they bucket separately from the nine in-zone boxes.
@@ -152,7 +148,7 @@ Together these flatten %red across all 17 zones into a 16–46% band with no zon
 universal (`Chase High-Out`: 91% → 16%). `k = p(1−p)/τ²` from the genuine
 between-bucket spread after subtracting sampling noise (5.0 pts in zone, 11.2 edge,
 7.5 deep — where a pitch lands *in* the zone barely matters; where you *miss* matters
-a lot). All constants live in `pitch_logic.js`, fitted on 45 batters / ~40k pitches.
+a lot). All constants live in `public/js/pitch_logic.js`, fitted on 45 batters / ~40k pitches.
 
 **Color Sensitivity** (`ratingSensitivity`, 1–5, default 3) scales `edge`. Because
 shrinkage has already pulled thin buckets onto the baseline, loosening the edge
@@ -206,15 +202,46 @@ BIS ±15° pull/opposite-field boundaries, with handedness flip applied (pull si
 
 | File | Purpose |
 |---|---|
-| `server.js` | Main Express server — API routes, data aggregation, disk cache, weakness zone computation |
-| `index.html` | Single-page app shell served to the browser |
-| `app.js` | Client-side application — rendering, picker, print paths (hand-written, no build step) |
-| `pitch_logic.js` | Shared pure logic: strike zone, pitch families, bucket ratings. Loaded in the browser AND required by server.js, so both describe the same zone |
+| `server.js` | Express setup: health check, logging, static files, mounts `routes/` at `/` and `BASE_PATH` |
+| `routes/batters.js` | `GET /api/batters`, `GET /api/rosters` — who can be picked |
+| `routes/batter_card.js` | `GET /api/batter/card` — the data behind one flashcard |
+| `routes/league_baseline.js` | `GET /api/league-baseline` — hit by the prewarm cron |
+| `routes/status.js` | `GET /api/health`, `GET /api/cache-status` |
+| `lib/config.js` | Env vars, cache dir, current season (from `SEASONS` in `public/js/pitch_logic.js`), team names |
+| `lib/slugger.js` | SLUGGER HTTP client: timeout + retry, concurrent paging, pitch slimming |
+| `lib/pitch_cache.js` | Batter and date-range pitch fetches with the streamed disk cache |
+| `lib/transform.js` | Raw pitches → per-batter card data; columnar wire encoding |
+| `lib/tendencies.js` | Steal/bunt threat, spray direction, out-pitch sequence |
+| `lib/league_baseline.js` | League first-pitch baseline (memo + disk) |
+| `lib/lookup.js` | SLUGGER player/team name lookups |
+| `lib/roster_cache.js` | Cached iScore rosters narrowed to active hitters |
+| `lib/dates.js` | Date parsing and range validation |
 | `lib/iscore.js` | iScore roster fetch and iScore→SLUGGER hitter name matching |
 | `lib/stats.js` | First-pitch approach and out-pitch finish location |
 | `lib/players.js` | Canonical player names and batter de-duplication |
-| `styles.css` | Flashcard UI stylesheet |
+
+### Browser app (`public/` — the only directory the server serves)
+
+| File | Purpose |
+|---|---|
+| `index.html` | Page shell; loads the scripts below in order |
+| `js/pitch_logic.js` | Shared pure logic: strike zone, pitch families, bucket ratings, season calendar and date windows. Also required by the server, so both describe the same zone |
+| `js/core.js` | Client state (`TEAMS_DATA`, `ROSTERS`, settings) and small helpers: `createElement`, hitter search, wire decoding |
+| `js/features/zone.js` | Strike zone graphic: grid, rated circles + hover breakdown, batter silhouette |
+| `js/features/arsenal.js` | "How he handles each pitch" table |
+| `js/features/tendencies.js` | First pitch, vulnerable / hot zones, out pitch, threats |
+| `js/features/guide.js` | The 💡 "Understanding the Widget" explainer |
+| `js/app.js` | `FlashcardApp`: selection state, data loading, render loop |
+| `js/toolbar.js` | Team → Hitter → Dates → Print |
+| `js/card.js` | The flashcard and the loading / empty / no-data / error states |
+| `js/settings.js` | Analysis Settings panel (Filters, Display, Advanced) |
+| `js/print.js` | Print card and the team packet |
+| `js/main.js` | Starts the app |
+| `styles.css` | Stylesheet |
 | `lhb.svg` / `rhb.svg` | Batter silhouettes flanking the strike zone (pitcher's perspective) |
+
+`app.js` defines the class; `toolbar.js`, `card.js`, `settings.js` and `print.js` add their
+methods with `Object.assign(FlashcardApp.prototype, …)`. Script order in `index.html` matters.
 
 ### Configuration & deployment
 
@@ -231,45 +258,36 @@ BIS ±15° pull/opposite-field boundaries, with handedness flip applied (pull si
 |---|---|
 | `contact_filter.py` | Python reference implementation of pitch contact classification (used for research/analysis, not the live server) |
 | `explore-dates.js` | One-off script for querying which dates have available game data |
-| `test_tendencies.js` | Manual test script for batter tendency logic in isolation |
 
 ---
 
 ## API Endpoints
 
-### `GET /api/teams/range`
-Fetches and processes all batter data for a date range. Results are disk-cached by date range key.
+All routes are served at `/` and again under `BASE_PATH` (`/widgets/flashcard` in production).
+
+### `GET /api/batters`
+Every SLUGGER hitter, deduped by canonical name: `{ batters: [{ name, ids, team, bats }], count }`.
+
+### `GET /api/rosters`
+iScore club rosters narrowed to hitters active in the last 21 days of games, each joined to SLUGGER ids. Cached 6 h; `?refresh=1` rebuilds. Answers 502 with empty `teams` if iScore is down — the client then falls back to `/api/batters`.
+
+### `GET /api/batter/card`
+One hitter's card data.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `startDate` | string | Yes | Start of date range (YYYY-MM-DD) |
-| `endDate` | string | Yes | End of date range (YYYY-MM-DD) |
-| `maxVelocity` | number | No | Exclude pitches faster than this value (mph) |
-| `pitchGroup` | string | No | `Fastballs`, `Breaking`, `Offspeed`, or `All` |
+| `batterIds` | string | Yes | Comma-separated SLUGGER ids (one person can carry several) |
+| `startDate` / `endDate` | string | No | YYYY-MM-DD; default the season to date |
+| `maxVelocity` | number | No | Exclude pitches faster than this (mph) |
+| `pitchGroup` | string | No | `All`, `Fastballs`, `Breaking` or `Offspeed` |
 
-### `POST /api/weakness-zones`
-Calculates weakness zones for a specific batter at a given confidence threshold.
+Errors: 400 `missing_batter` / `invalid_batter` / `invalid_range`, 404 `no_data` / `unknown_batter` / `future_date`, 503 `upstream_error` (feed unreachable — never reported as "no data").
 
-```json
-{
-  "confidenceThreshold": 75,
-  "teamsData": { ... },
-  "selectedTeam": "York Revolution",
-  "selectedBatter": "Player Name"
-}
-```
+### `GET /api/league-baseline`
+Recomputes the league first-pitch swing rate the cards grade against. Hit every 30 minutes by `prewarm.yml`.
 
-### `GET /api/generate-report`
-Generates a full printable report for a specific batter.
-
-| Parameter | Type | Description |
-|---|---|---|
-| `startDate` | string | Start of date range (YYYY-MM-DD) |
-| `endDate` | string | End of date range (YYYY-MM-DD) |
-| `maxVelocity` | number | Optional velocity filter |
-| `confidenceThreshold` | number | Optional, defaults to 50 |
-| `selectedTeam` | string | Team name |
-| `selectedBatter` | string | Batter name (use `{name}_LHB` or `{name}_RHB` for switch hitters) |
+### `GET /api/health`, `GET /api/cache-status`, `GET /health`
+Liveness and lookup-cache status.
 
 ---
 
@@ -296,7 +314,7 @@ caches. Set `CACHE_DIR` to a persistent mount if that ever matters.
 
 GitHub Actions (`.github/workflows/ci.yml`) runs on every push and pull request:
 
-- **checks** — `npm ci`, `node --check` on `server.js` and `app.js`, then `npm test` (`test_smoke.js`), which boots the server **without any secrets** and asserts the static `index.html` serves, the health endpoints answer, and `/api/batter/card` fails gracefully (400/404) when misused. No `SLUGGER_API_KEY` is needed for CI to pass.
+- **checks** — `npm ci`, `node --check` on the server, `lib/`, `routes/` and every `public/js` file, then `npm test` (`test_smoke.js`), which boots the server **without any secrets** and asserts the static `index.html` serves, the health endpoints answer, and `/api/batter/card` fails gracefully (400/404) when misused. No `SLUGGER_API_KEY` is needed for CI to pass.
 
 `ci.yml` runs checks only — deployment is `deploy.yml` (see **Deployment** above).
 
@@ -310,7 +328,7 @@ Pitch data lives behind the SLUGGER API (ALPB + Trackman). A valid `SLUGGER_API_
 
 ## Known Issues & Limitations
 
-- **ALPB 2026 season calendar** is hardcoded (April 21 – September 13). Update the calendar constants in `server.js` at the start of each new season.
+- **ALPB 2026 season calendar** is hardcoded (April 21 – September 13). Add the new season to `SEASONS` in `public/js/pitch_logic.js` at the start of each season — the server (`lib/config.js`) and the toolbar's date presets both read it.
 - **Cache invalidation** is date-range-keyed and versioned. Current `_v2` pitch caches retain the upstream `game_id`; older cache files are ignored. If the underlying data changes for a date range already cached, delete the relevant current-version file from `cache/` (local) or redeploy (Lambda `/tmp` is ephemeral).
 - **Analysis calibration** requires a time-ordered historical holdout. Raw pitch data is not committed, so do not adjust model constants using only unit-test fixtures or evaluate on the same games used to fit them.
 - **Large date ranges** can be slow on first load (cold cache) due to paginated API fetching; subsequent loads for the same range are fast.

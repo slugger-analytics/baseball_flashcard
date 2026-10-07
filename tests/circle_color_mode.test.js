@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert');
-const { getVisiblePitches } = require('../pitch_logic.js');
+const { getVisiblePitches } = require('../public/js/pitch_logic.js');
 
 // Build `total` pitches for one (family x zone) bucket, `wins` of them going the
 // pitcher's way (whiff) and the rest the batter's (hit).

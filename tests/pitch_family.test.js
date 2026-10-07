@@ -4,7 +4,7 @@ const assert = require('node:assert');
 const {
   pitchFamily, bucketKey, computeBucketRatings, computeArsenal,
   formatComposition, ARSENAL_MIN_SWINGS,
-} = require('../pitch_logic.js');
+} = require('../public/js/pitch_logic.js');
 
 function pz(pitch, zone, outcome, pitcherThrows = 'R') {
   return { pitch, zone, outcome, pitcherThrows, position: [50, 50] };
@@ -113,7 +113,7 @@ test('arsenal counts only swings, not takes', () => {
 
 // ── colour sensitivity ─────────────────────────────────────────────────────
 test('ratingSensitivity trades gray for colour without touching the estimates', () => {
-  const { getVisiblePitches: gvp } = require('../pitch_logic.js');
+  const { getVisiblePitches: gvp } = require('../public/js/pitch_logic.js');
   // A bucket sitting between the strict and loose edges: coloured at level 5,
   // gray at level 1. Baseline engineered to 0.500 (60 wins / 120 decisive), so
   // bucket A's delta is (31 - 30) / (60 + 54) = 0.88 pts — comfortably inside
@@ -138,7 +138,7 @@ test('ratingSensitivity trades gray for colour without touching the estimates', 
 });
 
 test('sensitivity defaults to level 3 when unset', () => {
-  const { sensitivityMultiplier, SENSITIVITY_MULTIPLIER, DEFAULT_SENSITIVITY } = require('../pitch_logic.js');
+  const { sensitivityMultiplier, SENSITIVITY_MULTIPLIER, DEFAULT_SENSITIVITY } = require('../public/js/pitch_logic.js');
   assert.strictEqual(sensitivityMultiplier({}), SENSITIVITY_MULTIPLIER[DEFAULT_SENSITIVITY]);
   assert.strictEqual(sensitivityMultiplier({ ratingSensitivity: 99 }), SENSITIVITY_MULTIPLIER[DEFAULT_SENSITIVITY]);
   // Strictly decreasing: a higher level always means a looser edge.

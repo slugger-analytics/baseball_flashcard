@@ -11,7 +11,7 @@ const {
   zoneRegime,
   pitchFamily,
   getZoneFromLocation,
-} = require('../pitch_logic.js');
+} = require('../public/js/pitch_logic.js');
 
 const API_URL = 'https://1ywv9dczq5.execute-api.us-east-2.amazonaws.com/ALPBAPI';
 const PAGE_SIZE = 1000;

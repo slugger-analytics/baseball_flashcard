@@ -128,3 +128,13 @@ test('iscoreHitters keeps active position players and drops pitchers', () => {
   assert.strictEqual(hitters[0].number, '26', 'number is stringified for display');
   assert.strictEqual(hitters[0].bats, 'R');
 });
+
+test('buildHitterIndex keeps the properly cased spelling of a case-variant name', () => {
+  const { buildHitterIndex } = require('../lib/iscore.js');
+  for (const order of [['bates, austin', 'Bates, Austin'], ['Bates, Austin', 'bates, austin']]) {
+    const idx = buildHitterIndex(order.map((name, i) => ({ player_name: name, player_id: `id-${i}`, is_hitter: true })));
+    assert.strictEqual(idx.length, 1);
+    assert.strictEqual(idx[0].name, 'Bates, Austin');
+    assert.deepStrictEqual(idx[0].ids.sort(), ['id-0', 'id-1']);
+  }
+});

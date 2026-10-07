@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert');
-const { getVisiblePitches, interleave } = require('../pitch_logic.js');
+const { getVisiblePitches, interleave } = require('../public/js/pitch_logic.js');
 
 const R = (e, seq) => ({ rating: 'red', extremity: e, seq });
 const G = (e, seq) => ({ rating: 'green', extremity: e, seq });

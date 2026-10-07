@@ -27,8 +27,7 @@ jobs:
       - name: Syntax check (server + client bundle)
         run: |
           node --check server.js
-          node --check app.js
-          node --check pitch_logic.js
+          for f in lib/*.js routes/*.js public/js/*.js public/js/features/*.js; do node --check "$f"; done
 
       - name: Unit tests (pure logic, node:test)
         run: npm run test:unit

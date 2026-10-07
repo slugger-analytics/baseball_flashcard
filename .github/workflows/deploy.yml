@@ -69,8 +69,9 @@ jobs:
       - name: Raise Lambda timeout for season-scale loads (best-effort)
         continue-on-error: true
         run: |
-          # Full-season /api/teams/range fetches run ~90s+ and grow with the season;
-          # the ALB idle timeout is 300s, so 240s keeps headroom on both sides.
+          # The league first-pitch baseline (~45s) and a cold roster build (21-day
+          # pitch window + iScore) run long; the ALB idle timeout is 300s, so 240s
+          # keeps headroom on both sides.
           # Only --timeout is passed: memory/env/image stay untouched.
           current=$(aws lambda get-function-configuration \
             --function-name $LAMBDA_FUNCTION --query Timeout --output text 2>/dev/null || echo 0)
@@ -101,38 +102,11 @@ jobs:
           done
           echo "Smoke FAILED after 10 attempts"; exit 1
 
-      - name: Smoke test data path (7-day range)
-        run: |
-          # The static page can be green while the data path 502s — assert the API
-          # itself works and ships the columnar format. A 7-day range answers in
-          # seconds, so this is the deterministic gate.
-          # Anchor to the last day with games, not today. Off-season, "today - 7"
-          # holds no games, the API correctly answers 404 no_data, and this gate
-          # failed every deploy from 2026-10-07 even though prod was healthy.
-          # Keep SEASON_END in step with SEASON_END in server.js.
-          SEASON_END=2026-09-13
-          END=$(date -u +%F)
-          if [[ "$END" > "$SEASON_END" ]]; then END=$SEASON_END; fi
-          START=$(date -u -d "$END -6 days" +%F)
-          URL="https://www.alpb-analytics.com/widgets/flashcard/api/teams/range?startDate=${START}&endDate=${END}&maxVelocity=105&pitchGroup=All"
-          for i in 1 2 3; do
-            code=$(curl -s --http1.1 -o /tmp/week.json -w "%{http_code}" --max-time 120 --compressed "$URL") || echo "curl exit: $?"
-            size=$(wc -c < /tmp/week.json 2>/dev/null || echo 0)
-            echo "attempt $i: HTTP ${code:-none}, ${size} bytes"
-            if [ "${code:-}" = "200" ] && [ "$size" -gt 20000 ] && grep -q '"pzLegend"' /tmp/week.json; then
-              echo "7-day data path OK"; exit 0
-            fi
-            sleep 15
-          done
-          echo "7-day data path smoke FAILED"; exit 1
-
       - name: Smoke test the default view (batter index → season-to-date card)
         run: |
-          # This is what a coach's DEFAULT "2026 Season to Date" click actually does:
-          # GET /api/batters, then a batter-scoped GET /api/batter/card for the full
-          # season. It does NOT call /api/teams/range — the season-scale range smoke
-          # this step replaced gated on an endpoint no UI screen reaches, which is why
-          # it failed on 2026-08-04 while the widget itself was working fine.
+          # This is the widget's only data path: GET /api/batters, then a
+          # batter-scoped GET /api/batter/card for the season — exactly what picking
+          # a hitter in the toolbar does. Asserts the columnar pzLegend ships.
           BASE="https://www.alpb-analytics.com/widgets/flashcard/api"
           END=$(date -u +%F)
           curl -sS --http1.1 -o /tmp/batters.json -w "batters HTTP %{http_code}\n" --max-time 60 --compressed "${BASE}/batters"

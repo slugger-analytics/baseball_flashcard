@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert');
-const { orderProfilesForPrint, bulkPrintSettings } = require('../pitch_logic.js');
+const { orderProfilesForPrint, bulkPrintSettings } = require('../public/js/pitch_logic.js');
 
 const profile = (batter, handedness, totalPitches) =>
   ({ batter, handedness, stats: { totalPitches } });

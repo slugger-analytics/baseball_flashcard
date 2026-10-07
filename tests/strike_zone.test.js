@@ -3,7 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const {
   STRIKE_ZONE, ZONE_PCT, plateToPercent, getZoneFromLocation, isChaseZone,
-} = require('../pitch_logic.js');
+} = require('../public/js/pitch_logic.js');
 
 const HW = STRIKE_ZONE.HALF_WIDTH;
 const MID_H = (STRIKE_ZONE.TOP + STRIKE_ZONE.BOTTOM) / 2;

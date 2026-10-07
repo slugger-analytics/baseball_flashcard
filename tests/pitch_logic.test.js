@@ -5,7 +5,7 @@ const {
   computeBucketRatings, getVisiblePitches, bucketKey,
   bandMissDescription, getZoneFromLocation,
   meetsZoneSwingMinimum, meetsHotZoneThreshold, zoneContactRates, rankZoneValues,
-} = require('../pitch_logic.js');
+} = require('../public/js/pitch_logic.js');
 
 const { finishBand } = require('../lib/stats.js');
 

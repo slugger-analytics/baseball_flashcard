@@ -53,7 +53,7 @@ html, body {
   box-sizing: border-box;
 }
 
-/* Team Selection Screen */
+/* Body states: loading, empty, no data, error */
 .team-select-screen {
   text-align: center;
   max-width: 1200px;
@@ -61,12 +61,7 @@ html, body {
   padding: 40px 20px;
 }
 
-.team-select-header {
-  margin-bottom: 40px;
-}
-
-.team-select-screen h1,
-.lineup-header h1 {
+.team-select-screen h1 {
   font-size: 52px;
   font-weight: 800; /* Bolder, more modern weight */
   letter-spacing: -1px; /* Tighter letter spacing looks sleeker */
@@ -175,88 +170,6 @@ html, body {
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
 }
 
-.team-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(var(--card-width), 1fr));
-  gap: clamp(16px, 3vw, 24px);
-  max-width: 1000px;
-  margin: 0 auto;
-}
-
-/* The Cards: Removing heavy borders, adding soft shadows */
-.team-card {
-  background: var(--panel);
-  border: 1px solid rgba(255, 255, 255, 0.5); /* Glassy border effect */
-  border-radius: 20px; /* Much rounder, friendly corners */
-  padding: clamp(16px, 3vw, 32px) clamp(12px, 2vw, 24px);
-  cursor: pointer;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  box-shadow: var(--shadow-md); /* Soft depth */
-}
-
-.team-card:hover {
-  transform: translateY(-4px);
-  border-color: var(--accent);
-  box-shadow: 0 12px 24px -8px rgba(59, 130, 246, 0.6);
-}
-
-.team-card-name {
-  font-size: 24px;
-  font-weight: 700;
-  color: var(--text);
-  margin-bottom: 20px;
-  padding-bottom: 16px;
-  border-bottom: 1px solid var(--border); /* Thinner, softer divider */
-}
-
-.team-card-stats {
-  display: flex;
-  justify-content: space-around;
-  gap: 16px;
-}
-
-.stat-item {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-}
-
-.stat-number {
-  font-size: clamp(24px, 5vw, 32px);
-  font-weight: 800;
-  color: var(--accent);
-  line-height: 1;
-}
-
-.stat-number.stat-pitches {
-  color: #1947ac;
-}
-
-.info-bubble {
-  background: #3a7fda;
-  color: #ffffff;
-  padding: 4px 14px;
-  border-radius: 20px;
-  font-size: 13px;
-  font-weight: 500;
-}
-
-.stat-label {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 1px; /* More spacing on all-caps makes it look premium */
-}
-
-.team-buttons {
-  display: flex;
-  gap: 16px;
-  justify-content: center;
-  flex-wrap: wrap;
-}
-
 /* Premium Buttons */
 .team-btn {
   padding: clamp(10px, 1.5vw, 16px) clamp(16px, 3vw, 32px);
@@ -278,256 +191,6 @@ html, body {
   box-shadow: 0 12px 24px -8px rgba(59, 130, 246, 0.6);
 }
 
-/* --- Premium Velocity Slider --- */
-input[type="range"]#maxVelocity {
-  -webkit-appearance: none;
-  appearance: none;
-  width: calc(100% - 28px);
-  margin: 0 14px;
-  height: 12px;
-  /* INVERTED GRADIENT: Light blue on the left, Dark Navy on the right */
-  background: linear-gradient(to right, #3b82f6 0%, #1e293b 100%); 
-  border-radius: 8px;
-  outline: none;
-  box-shadow: inset 0 2px 4px rgba(0,0,0,0.3);
-  margin-top: 10px;
-}
-
-/* The Draggable "Thumb" (Chrome/Safari/Edge) */
-input[type="range"]#maxVelocity::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  background: #ffffff; /* Crisp white circle */
-  border: 4px solid #3b82f6; /* Blue outer ring */
-  cursor: pointer;
-  box-shadow: var(--shadow-md); /* Floating drop shadow */
-  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-input[type="range"]#maxVelocity::-webkit-slider-thumb:hover {
-  transform: scale(1.15); /* Pops up slightly when hovered */
-  box-shadow: var(--shadow-lg);
-}
-
-/* The Draggable "Thumb" (Firefox compatibility) */
-input[type="range"]#maxVelocity::-moz-range-thumb {
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  background: #ffffff;
-  border: 4px solid #3b82f6;
-  cursor: pointer;
-  box-shadow: var(--shadow-md);
-  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-input[type="range"]#maxVelocity::-moz-range-thumb:hover {
-  transform: scale(1.15);
-  box-shadow: var(--shadow-lg);
-}
-
-/* --- Lineup Grid Screen --- */
-.lineup-screen {
-  max-width: 1200px;
-  width: 100%;
-  padding: 20px;
-}
-
-.lineup-header {
-  text-align: center;
-  margin-bottom: 32px;
-  position: relative;
-}
-
-.lineup-header h1 {
-  font-size: clamp(28px, 5vw, 42px);
-  font-weight: 800;
-  margin-bottom: 8px;
-  color: var(--text);
-  text-align: center;
-}
-
-.lineup-header p {
-  font-size: 16px;
-  color: var(--muted);
-}
-
-/* Back/print buttons in lineup header use flex layout — no absolute positioning needed */
-
-/* Upgraded Back/Print Buttons */
-.back-btn {
-  padding: 10px 20px;
-  background: var(--muted);
-  color: white;
-  border: none;
-  border-radius: 10px;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  box-shadow: var(--shadow-sm);
-}
-
-.back-btn:hover {
-  background: #475569;
-  transform: translateY(-2px);
-  box-shadow: var(--shadow-md);
-}
-
-.print-btn {
-  padding: 10px 20px;
-  background: #10b981;
-  color: white;
-  border: none;
-  border-radius: 10px;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  box-shadow: var(--shadow-sm);
-  transition: all 0.2s ease;
-}
-
-.print-btn:hover {
-  background: #059669;
-  transform: translateY(-2px);
-  box-shadow: var(--shadow-md);
-}
-
-/* back-btn:hover applies the standard translateY(-2px) lift — no override needed here */
-
-/* ── Roster sort controls ── */
-.sort-container {
-  display: flex;
-  align-items: center;
-  overflow: hidden;
-  background: #ffffff;
-  border: 1px solid #e2e8f0;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.05);
-  border-radius: 99px;
-  padding: 0;
-  width: max-content;
-  margin: 0 auto 12px;
-}
-
-.sort-select option {
-  text-align: center;
-}
-
-.sort-select {
-  background: transparent;
-  border: none;
-  border-right: 1px solid #e2e8f0;
-  border-radius: 0;
-  padding: 10px 16px;
-  font-size: 14px;
-  font-weight: 600;
-  font-family: inherit;
-  color: var(--text);
-  cursor: pointer;
-  outline: none;
-  appearance: none;
-  text-align: center;
-  text-align-last: center;
-  transition: background 0.15s;
-}
-
-.sort-select:focus,
-.sort-select:hover {
-  background: #f1f5f9;
-}
-
-.sort-toggle-btn {
-  background: transparent;
-  border: none;
-  border-radius: 0;
-  padding: 10px 16px;
-  font-size: 16px;
-  font-weight: 700;
-  font-family: inherit;
-  color: var(--text);
-  cursor: pointer;
-  line-height: 1;
-  transition: background 0.15s, color 0.15s;
-}
-
-.sort-toggle-btn:hover {
-  background: #f1f5f9;
-}
-
-.sort-toggle-btn.active {
-  color: var(--accent);
-  background: #eff6ff;
-}
-
-.sort-toggle-btn:disabled {
-  opacity: 0.35;
-  cursor: not-allowed;
-}
-
-.sort-toggle-btn:disabled:hover {
-  background: transparent;
-}
-
-.lineup-header__topbar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 12px;
-}
-
-.lineup-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(clamp(160px, 20vw, 200px), 1fr));
-  gap: clamp(12px, 2vw, 16px);
-  margin-bottom: 24px;
-  max-width: 1000px;
-  margin-left: auto;
-  margin-right: auto;
-}
-
-/* Upgraded Player Cards */
-.mini-card {
-  background: var(--panel);
-  border: 1px solid rgba(255, 255, 255, 0.5);
-  border-radius: 16px;
-  padding: clamp(12px, 2vw, 20px);
-  cursor: pointer;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-  text-align: center;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-  gap: 8px;
-  min-height: 140px;
-  box-shadow: var(--shadow-sm);
-}
-
-.mini-card:hover {
-  border-color: var(--accent);
-  transform: translateY(-4px);
-  box-shadow: 0 12px 24px -8px rgba(59, 130, 246, 0.6) !important;
-}
-
-.mini-card-order {
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--muted);
-  background: #f1f5f9;
-  padding: 4px 10px;
-  border-radius: 8px;
-}
-
-.mini-card-name {
-  font-size: clamp(14px, 2vw, 18px);
-  font-weight: 700;
-  color: var(--text);
-  line-height: 1.2;
-}
-
 .mini-card-hand {
   font-size: 14px;
   font-weight: 700;
@@ -540,12 +203,6 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
 .mini-card-hand.RHB {
   background: #fee2e2;
   color: #b91c1c;
-}
-
-.mini-card-pitches {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--muted);
 }
 
 .low-data-badge {
@@ -637,22 +294,6 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
 .chip:hover {
   transform: translateY(-2px);
   box-shadow: var(--shadow-md);
-}
-
-.chip.back-chip {
-  background: var(--muted);
-}
-
-.chip.back-chip:hover {
-  background: #475569;
-}
-
-.chip.print-chip {
-  background: #10b981; /* Premium Emerald */
-}
-
-.chip.print-chip:hover {
-  background: #059669;
 }
 
 .pitch-zone-section {
@@ -875,7 +516,7 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
 
 .tendencies h3 { color: var(--text); }
 
-.tendency-item, .threat-item {
+.threat-item {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -883,11 +524,11 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
   border-bottom: 1px solid var(--border);
 }
 
-.tendency-item:last-child, .threat-item:last-child {
+.threat-item:last-child {
   border-bottom: none;
 }
 
-.tendency-label, .threat-label {
+.threat-label {
   font-size: 16px;
   color: var(--muted);
   font-weight: 600;
@@ -900,7 +541,7 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
   min-width: 52px;
 }
 
-.tendency-value, .threat-value {
+.threat-value {
   font-size: 16px;
   font-weight: 700;
   color: var(--text);
@@ -1337,46 +978,6 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
   color: #1e40af;
 }
 
-/* ── Read More / Expandable sections ─────────────────── */
-.read-more-area {
-  margin-top: 6px;
-}
-
-.read-more-btn {
-  background: none;
-  border: none;
-  color: var(--accent);
-  font-size: 11px;
-  font-weight: 600;
-  cursor: pointer;
-  padding: 2px 0;
-  letter-spacing: 0.02em;
-}
-
-.read-more-btn:hover {
-  text-decoration: underline;
-}
-
-.read-more-expanded {
-  background: #f8fafc;
-  border-left: 3px solid var(--accent);
-  border-radius: 0 6px 6px 0;
-  padding: 8px 10px;
-  margin-bottom: 4px;
-  font-size: 12px;
-  color: #334155;
-  line-height: 1.55;
-}
-
-.read-more-expanded ul {
-  margin: 6px 0 0 0;
-  padding-left: 16px;
-}
-
-.read-more-expanded li {
-  margin-bottom: 4px;
-}
-
 /* ── Section info button (ℹ) ─────────────────────────── */
 .section-info-btn {
   background: none;
@@ -1400,36 +1001,8 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
   border-color: var(--accent);
 }
 
-/* ── Confidence info expansion ───────────────────────── */
-.confidence-info-expand {
-  background: #f8fafc;
-  border-radius: 8px;
-  border: 1px solid #e2e8f0;
-  padding: 10px 12px;
-  margin-bottom: 10px;
-  font-size: 12px;
-  color: #334155;
-  line-height: 1.55;
-}
-
-.confidence-info-expand p {
-  margin: 0 0 6px 0;
-}
-
-.confidence-info-expand ul {
-  margin: 0;
-  padding-left: 16px;
-}
-
-.confidence-info-expand li {
-  margin-bottom: 5px;
-}
-
-/* Hide read-more buttons in print */
-.print-widget .read-more-btn,
-.print-widget .read-more-area,
-.print-widget .section-info-btn,
-.print-widget .confidence-info-expand {
+/* Hide the on-screen (i) buttons in print */
+.print-widget .section-info-btn {
   display: none !important;
 }
 
@@ -1679,18 +1252,6 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
   background: var(--accent);
 }
 
-.toggle-input:checked + .toggle-track.toggle-green {
-  background: #22c55e;
-}
-
-.toggle-input:checked + .toggle-track.toggle-red {
-  background: #ef4444;
-}
-
-.toggle-input:checked + .toggle-track.toggle-yellow {
-  background: #f59e0b;
-}
-
 .toggle-input:checked + .toggle-track::before {
   transform: translateX(20px);
 }
@@ -1816,14 +1377,6 @@ input[type="range"]#maxVelocity::-moz-range-thumb:hover {
   flex-shrink: 0;
 }
 
-/* Make Team Title Bigger on Mobile */
-.lineup-header h2, 
-.team-title {
-  font-size: 32px !important;
-  font-weight: 900 !important;
-  text-transform: uppercase;
-}
-
 /* Keep print renders completely off-screen to stop UI jumping/freezing */
 #print-container, 
 #lineup-print-container {
@@ -1850,15 +1403,6 @@ button:active {
 
 /* ── Responsive: collapse to 1 column on small screens ── */
 @media (max-width: 720px) {
-  /* FORCE HEADER INTO A CENTERED 3-LINE STACK */
-  .app-header {
-    display: flex !important;
-    flex-direction: column !important;
-    align-items: center !important;
-    text-align: center !important;
-    padding-top: 10px !important;
-    gap: 12px !important;
-  }
 
   /* Line 1: Name, Handedness, Pitches */
   .header__title {
@@ -1866,22 +1410,6 @@ button:active {
     justify-content: center !important;
     width: 100% !important;
     order: 1 !important;
-  }
-
-  /* Line 2: Tool Icon and Lightbulb Icon */
-  .app-header .settings-btn, 
-  .app-header .info-btn {
-    position: static !important; /* Removes any floating/absolute positioning */
-    display: inline-block !important;
-    margin: 0 10px !important;
-  }
-  
-  /* We use a pseudo-container via flex-order to group the icons together visually */
-  .header-icons-wrapper {
-    display: flex !important;
-    justify-content: center !important;
-    width: 100% !important;
-    order: 2 !important;
   }
 
   /* Line 3: The Pills (Prev, Next, Print, Lineup) */
@@ -1935,7 +1463,6 @@ button:active {
 }
 
 @media (max-width: 600px) {
-  .lineup-grid { grid-template-columns: 1fr; }
   .widget { width: 95vw; transform: scaleX(0.70); transform-origin: center center; }
   .pitch-zone { width: 280px; height: 280px; }
   .header__title .name { font-size: 20px; }
@@ -2143,9 +1670,6 @@ button:active {
     align-self: center !important;
   }
 
-  /* C2: Hide Weakness Confidence tier buttons */
-  .print-widget .confidence-widget { display: none !important; }
-
   /* C5: Much larger info section text — readable under pressure */
   .print-widget .info-section {
     display: grid !important;
@@ -2328,68 +1852,11 @@ button:active {
   box-shadow: 0 12px 24px -8px rgba(59, 130, 246, 0.6); 
 }
 
-/* --- Pitch Filter Toggle Buttons --- */
-.pitch-filter-btn {
-  padding: 12px 16px;
-  border-radius: 10px;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  flex: 1;
-  min-width: 200px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px; /* Space between text and icon */
-}
-
-/* The selected, vibrant blue state */
-.pitch-filter-btn.active {
-  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-hover) 100%);
-  color: white;
-  border: 1px solid transparent;
-  box-shadow: 0 4px 6px -1px rgba(59, 130, 246, 0.3);
-}
-
-/* The semi-grayed out, inactive state */
-.pitch-filter-btn.inactive {
-  background: #f1f5f9; 
-  color: #64748b; 
-  border: 1px solid #cbd5e1;
-  box-shadow: none;
-}
-
-.pitch-filter-btn.inactive:hover {
-  background: #e2e8f0;
-  color: #475569;
-}
-
-/* Tooltip Icon styling */
-.pitch-info-icon {
-  font-weight: normal;
-  opacity: 0.8;
-  cursor: help;
-  font-size: 16px;
-}
-
-.date-inputs-row {
-  display: flex;
-  gap: 15px;
-  margin-bottom: 15px;
-}
-
 /* ── TABLET (max-width: 1024px) ── */
 @media (max-width: 1024px) {
   .widget {
     width: 95vw;
     min-width: 0;
-  }
-  .team-grid {
-    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  }
-  .lineup-grid {
-    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
   }
 }
 
@@ -2446,24 +1913,6 @@ button:active {
     max-height: none;
   }
 
-  /* Stat pills: 2×2 grid on mobile */
-  .stat-pills-container {
-    display: grid !important;
-    grid-template-columns: 1fr 1fr !important;
-    gap: 8px !important;
-  }
-
-  /* Team & roster cards: fluid 2-column */
-  .team-grid {
-    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-    gap: 12px;
-    padding: 0 4px;
-  }
-  .lineup-grid {
-    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-    gap: 10px;
-  }
-
   /* Sidebar docked: stack below widget — !important overrides the base flex-direction:row */
   .app-sidebar-docked {
     flex-direction: column !important;
@@ -2486,7 +1935,8 @@ button:active {
   }
 
   /* Touch targets ≥ 44px */
-  .chip, .back-btn, .print-btn, .team-btn {
+  .chip,
+  .team-btn {
     min-height: 44px;
     display: inline-flex;
     align-items: center;
@@ -2501,16 +1951,6 @@ button:active {
     width: auto !important;
     height: 44px;
     font-size: 14px;
-  }
-  .pitch-filter-btn {
-    min-height: 44px;
-    padding: 10px 10px;
-    min-width: 0;
-    flex: 0 1 calc(50% - 5px);
-  }
-
-  .date-inputs-row {
-    flex-direction: column !important;
   }
 
   /* Team select screen */
@@ -2535,34 +1975,6 @@ button:active {
     text-align: center !important;
   }
 
-  /* Lineup: prevent overflow */
-  .lineup-screen {
-    overflow-x: hidden;
-    width: 100%;
-    box-sizing: border-box;
-    padding: 16px;
-  }
-  .lineup-header {
-    margin-bottom: 16px;
-  }
-  .lineup-header__topbar {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 8px;
-  }
-  .lineup-header .back-btn,
-  .lineup-header .print-btn {
-    position: static;
-    transform: none;
-  }
-  .lineup-header h1 {
-    font-size: 22px;
-    margin: 0 0 8px;
-    text-align: center;
-    word-break: break-word;
-  }
-
   /* Header title + controls centering */
   .header__title {
     justify-content: center !important;
@@ -2570,8 +1982,6 @@ button:active {
 }
 
 /* FORCE EMOJIS AND TEXT TO CENTER PERFECTLY INSIDE PILLS */
-.app-header .settings-btn, 
-.app-header .info-btn,
 .header__controls button {
   display: inline-flex !important;
   align-items: center !important;
@@ -2581,17 +1991,8 @@ button:active {
   padding: 8px 16px !important; /* Standardizes the pill shape */
 }
 
-/* Ensure the emoji itself doesn't have weird margins */
-.app-header .settings-btn span, 
-.app-header .info-btn span {
-  display: inline-flex !important;
-  align-items: center !important;
-}
-
 /* Make the landing page instructions smaller and less distracting */
-.empty-state p, 
-.placeholder-text, 
-.welcome-subtitle {
+.empty-state p {
   font-size: 15px !important;
   font-weight: 400 !important;
   color: #64748b !important; /* Lighter gray so it doesn't fight the title */
@@ -2644,29 +2045,6 @@ button:active {
     max-height: 100%;
     object-fit: contain;
   }
-}
-
-/* ── Team print packet ───────────────────────────────────────────────────────
-   Row under the batter picker, shown only when one club is in scope. */
-.team-packet-row {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  flex-wrap: wrap;
-  max-width: 620px;
-  margin: 4px auto 0;
-  padding: 12px 14px;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
-  border-radius: 10px;
-}
-
-.team-packet-label {
-  flex: 0 0 auto;
-  font-size: 13px;
-  font-weight: 600;
-  color: #475569;
 }
 
 /* Progress / confirm overlay while a packet builds. Mounted on document.body so
@@ -2732,3 +2110,177 @@ button:active {
   color: #475569;
   border: 1px solid #cbd5e1;
 }
+
+/* ── Toolbar: Team → Hitter → Dates → Print ─────────────────────────────── */
+#toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
+}
+.toolbar {
+  max-width: 1320px;
+  margin: 0 auto;
+  padding: 12px 20px;
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(260px, 1.6fr) minmax(200px, 1fr) auto;
+  gap: 14px;
+  align-items: start;
+}
+.toolbar__field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.toolbar__label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.toolbar__select,
+.toolbar__search,
+.toolbar__date {
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 14px;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+}
+.toolbar__select:focus,
+.toolbar__search:focus,
+.toolbar__date:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.toolbar__select:disabled { color: var(--muted); background: var(--bg); }
+.toolbar__hitter { display: flex; gap: 6px; align-items: stretch; }
+.toolbar__combo { position: relative; flex: 1; min-width: 0; }
+.toolbar__step {
+  flex: 0 0 auto;
+  width: 36px;
+  font-size: 20px;
+  line-height: 1;
+  color: var(--accent);
+  background: var(--panel);
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.toolbar__step:disabled { color: #cbd5e1; cursor: default; }
+.toolbar__custom { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.toolbar__custom .toolbar__date { flex: 1 1 120px; width: auto; }
+.toolbar__dash { color: var(--muted); }
+.toolbar__hint { font-size: 12px; color: var(--muted); }
+.toolbar__hint--error { color: var(--bad); font-weight: 600; }
+.toolbar__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 19px; /* line up with the controls under the field labels */
+}
+.toolbar__btn {
+  min-height: 40px;
+  padding: 8px 16px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  color: white;
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.toolbar__btn:hover:not(:disabled) { background: var(--accent-hover); }
+.toolbar__btn:disabled { opacity: 0.45; cursor: default; }
+.toolbar__btn--ghost { color: var(--accent); background: var(--panel); }
+.toolbar__btn--ghost:hover:not(:disabled) { color: white; }
+
+.hitter-menu {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 55vh;
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  box-shadow: var(--shadow-lg);
+  text-align: left;
+}
+.hitter-menu__heading {
+  padding: 7px 12px 4px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.hitter-menu__option {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 12px;
+  font: inherit;
+  font-size: 14px;
+  color: var(--text);
+  text-align: left;
+  background: var(--panel);
+  border: 0;
+  border-top: 1px solid #f1f5f9;
+  cursor: pointer;
+}
+.hitter-menu__option:hover,
+.hitter-menu__option--active { background: #eff6ff; }
+.hitter-menu__name { font-weight: 600; }
+.hitter-menu__detail { font-size: 12px; color: var(--muted); }
+.hitter-menu__empty { padding: 12px; color: var(--muted); }
+
+.chip.chip--active { background: var(--text); }
+
+.state-message {
+  max-width: 560px;
+  margin: 18px auto;
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.state-message--error {
+  padding: 16px 20px;
+  color: #c62828;
+  background: #ffe6e6;
+  border: 2px solid #d32f2f;
+  border-radius: 8px;
+}
+
+@media (max-width: 900px) {
+  .toolbar { grid-template-columns: 1fr 1fr; }
+  .toolbar__actions { flex-direction: row; padding-top: 19px; }
+}
+@media (max-width: 560px) {
+  #toolbar { position: static; }
+  .toolbar { grid-template-columns: 1fr; padding: 10px 16px; gap: 10px; }
+  .toolbar__actions { padding-top: 0; }
+  .toolbar__actions .toolbar__btn { flex: 1; }
+}
+@media print {
+  #toolbar { display: none !important; }
+}
+.app-sidebar-docked .settings-sidebar {
+  top: calc(var(--toolbar-h, 0px) + 12px);
+  height: calc(100vh - var(--toolbar-h, 0px) - 24px);
+}
+
+/* Settings: the Advanced card is a <details>; its header doubles as the toggle. */
+.settings-advanced > summary {
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+.settings-advanced > summary::-webkit-details-marker { display: none; }
+.settings-advanced > summary::after { content: ' ▸'; color: var(--muted); }
+.settings-advanced[open] > summary::after { content: ' ▾'; }
+.settings-advanced:not([open]) > summary { margin-bottom: 0; padding-bottom: 0; border-bottom: 0; }

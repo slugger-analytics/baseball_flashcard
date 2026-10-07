@@ -682,32 +682,70 @@ function getVisiblePitches(batterData, settings) {
   return { pitches: ordered, bucketCtx, populationCount: population.length };
 }
 
+// ── Date windows ─────────────────────────────────────────────────────────────
+// The ALPB season calendar — the one copy. Hardcoded by necessity (the feed
+// exposes no schedule endpoint); add each new season here. The server's
+// lib/config.js reads the last entry, the toolbar's Dates control reads them all.
+const SEASONS = [
+  { year: 2025, start: '2025-04-25', end: '2025-09-18' },
+  { year: 2026, start: '2026-04-21', end: '2026-09-13' },
+];
+
+const RANGE_PRESETS = ['season', '30', '14', 'custom'];
+const DEFAULT_RANGE_PRESET = 'season';
+
 /**
- * Splits an inclusive date range into adjacent inclusive windows of at most
- * `chunkDays` days: [start, start+chunkDays−1], [start+chunkDays, …], with the
- * last window ending on `endDate`. Wide ranges are loaded through these windows —
- * each fits every request budget (Lambda time, ALB response size) on its own, and
- * every window except the one containing today keeps the same dates from day to
- * day, so its server-side cache file stays warm across sessions.
- * @param {string} startDate - ISO date (YYYY-MM-DD), inclusive.
- * @param {string} endDate - ISO date (YYYY-MM-DD), inclusive.
- * @param {number} [chunkDays=30] - Maximum days per window.
- * @returns {{start: string, end: string}[]} Windows in date order.
+ * The season a coach means by "the season" on a given day: the current one once
+ * it has started (opening day through today, or through its last day once it is
+ * over), otherwise the last completed one.
+ * @param {string} today - ISO date (YYYY-MM-DD).
+ * @returns {{start: string, end: string, year: number}}
  */
-function planRangeChunks(startDate, endDate, chunkDays = 30) {
-  const addDays = (iso, n) => {
-    const d = new Date(`${iso}T00:00:00Z`);
-    d.setUTCDate(d.getUTCDate() + n);
-    return d.toISOString().slice(0, 10);
-  };
-  const chunks = [];
-  let cursor = startDate;
-  while (cursor <= endDate) {
-    const end = addDays(cursor, chunkDays - 1);
-    chunks.push({ start: cursor, end: end < endDate ? end : endDate });
-    cursor = addDays(cursor, chunkDays);
+function seasonRange(today) {
+  const started = SEASONS.filter(s => s.start <= today);
+  const s = started.length ? started[started.length - 1] : SEASONS[0];
+  return { start: s.start, end: today < s.end ? today : s.end, year: s.year };
+}
+
+/**
+ * Resolves a Dates choice to the window sent to the server.
+ *
+ * "Last N days" counts back from the last day of the season window, not from
+ * today: off-season, the last 14 calendar days hold no games at all, and a coach
+ * asking for "the last 14 days" means the most recent two weeks of baseball.
+ * @param {string} preset - 'season' | '30' | '14' | 'custom'.
+ * @param {{start: string, end: string}|null} custom - Used when preset is 'custom'.
+ * @param {string} today - ISO date (YYYY-MM-DD).
+ * @returns {{start: string, end: string}}
+ */
+function rangeForPreset(preset, custom, today) {
+  const season = seasonRange(today);
+  if (preset === 'custom' && custom && custom.start && custom.end) {
+    return { start: custom.start, end: custom.end };
   }
-  return chunks;
+  const days = preset === '30' ? 30 : preset === '14' ? 14 : 0;
+  if (!days) return { start: season.start, end: season.end };
+  const d = new Date(`${season.end}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - (days - 1));
+  const start = d.toISOString().slice(0, 10);
+  return { start: start < season.start ? season.start : start, end: season.end };
+}
+
+/**
+ * Short human label for a window: "Apr 21 – Sep 13" (year added when the two
+ * ends fall in different years).
+ */
+function formatRange(range) {
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const fmt = (iso, withYear) => {
+    const [y, m, d] = iso.split('-').map(Number);
+    return `${MONTHS[m - 1]} ${d}${withYear ? `, ${y}` : ''}`;
+  };
+  if (!range || !range.start || !range.end) return '';
+  const crossYear = range.start.slice(0, 4) !== range.end.slice(0, 4);
+  return range.start === range.end
+    ? fmt(range.start, crossYear)
+    : `${fmt(range.start, crossYear)} – ${fmt(range.end, crossYear)}`;
 }
 
 // ── Zone group annotations ───────────────────────────────────────────────────
@@ -893,6 +931,11 @@ if (typeof module !== 'undefined' && module.exports) {
     ZONE_GROUP_MIN_CONTACT,
     ZONE_GROUP_EDGE,
     annotateZoneGroups,
-    planRangeChunks,
+    SEASONS,
+    RANGE_PRESETS,
+    DEFAULT_RANGE_PRESET,
+    seasonRange,
+    rangeForPreset,
+    formatRange,
   };
 }

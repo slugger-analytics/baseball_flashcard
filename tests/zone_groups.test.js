@@ -4,7 +4,7 @@ const assert = require('node:assert');
 const {
   annotateZoneGroups, ZONE_GROUP_MIN_PITCHES, ZONE_GROUP_MIN_SWINGS,
   ZONE_GROUP_MIN_CONTACT, ZONE_GROUP_EDGE,
-} = require('../pitch_logic.js');
+} = require('../public/js/pitch_logic.js');
 
 /** A zone with per-family cells, shaped as the server accumulates them. */
 const zone = (totals, groups) => ({

@@ -23,12 +23,9 @@ COPY --from=builder /app/node_modules ./node_modules
 # Copy application files
 COPY package*.json ./
 COPY server.js ./
-COPY app.js ./
-COPY pitch_logic.js ./
 COPY lib/ ./lib/
-COPY index.html ./
-COPY styles.css ./
-COPY *.svg ./
+COPY routes/ ./routes/
+COPY public/ ./public/
 
 # Lambda Web Adapter configuration
 # PORT: Lambda Web Adapter forwards requests to this port
