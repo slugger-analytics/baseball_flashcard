@@ -418,6 +418,33 @@ const MAX_UNCACHED_RANGE_DAYS = Number(process.env.MAX_UNCACHED_RANGE_DAYS || 60
 // refused — a single team's slice sits an order of magnitude below the limit.
 const MAX_WIRE_BYTES = Number(process.env.MAX_WIRE_BYTES || 4000000);
 
+// A SLUGGER player id is a UUID; the HTTP tests use short slugs like
+// 'velo-test-0001' that are served from a seeded disk cache. This accepts both and
+// rejects what is plainly not an id ('../../etc/passwd', "' OR 1=1--", a 5,000-
+// character string) before it reaches the upstream URL. It is a format check, not
+// an existence check — a well-formed id that SLUGGER does not know still goes
+// upstream and is handled by isUnknownBatterError below.
+const BATTER_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+const MAX_BATTER_IDS = 20;
+
+/**
+ * True when the feed rejected the request because of the batter id itself.
+ *
+ * SLUGGER answers an id it does not recognise with HTTP 400 and a validation error
+ * naming `batter_id`. That is an answer, not an outage — so "couldn't reach the
+ * feed" would be false. It is also not "no pitch data for this batter": the
+ * card must only say that when the feed returned an empty list (see the
+ * upstream_failure tests). Requiring the error to name batter_id keeps a 400 caused
+ * by anything else — including a malformed request from our own code — on the 503
+ * path, where it belongs.
+ */
+function isUnknownBatterError(err) {
+  const res = err && err.response;
+  if (!res || res.status !== 400) return false;
+  const body = typeof res.data === 'string' ? res.data : JSON.stringify(res.data || '');
+  return /batter_id/i.test(body);
+}
+
 const UPSTREAM_ERROR_MESSAGE = "Couldn't reach the league data feed. Please try again in a moment.";
 
 /**
@@ -2012,6 +2039,9 @@ const batterCardHandler = async (req, res) => {
     if (ids.length === 0) {
       return res.status(400).json({ error: 'missing_batter', message: 'Select a batter first.' });
     }
+    if (ids.length > MAX_BATTER_IDS || !ids.every(id => BATTER_ID_PATTERN.test(id))) {
+      return res.status(400).json({ error: 'invalid_batter', message: 'That is not a valid batter.' });
+    }
 
     const range = resolveDateRange(startDate, endDate);
     if (range.error) {
@@ -2031,6 +2061,12 @@ const batterCardHandler = async (req, res) => {
     } catch (err) {
       // Distinct from the empty case below: the feed was unreachable, so we do not
       // know whether this batter has data. Saying "no data found" would be a lie.
+      if (isUnknownBatterError(err)) {
+        return res.status(404).json({
+          error: 'unknown_batter',
+          message: "This batter isn't recognised by the league data feed.",
+        });
+      }
       console.error('Upstream fetch failed for batter card:', err.message);
       return res.status(503).json({ error: 'upstream_error', message: UPSTREAM_ERROR_MESSAGE });
     }

@@ -113,3 +113,68 @@ test('sluggerRequest passes an explicit timeout (an unbounded page can eat the w
       `timeout must be set and stay under the upstream 29s gateway limit, got ${seenConfig.timeout}`);
   });
 });
+
+// ── batter id handling ─────────────────────────────────────────────────────
+// Three distinct answers, and the card must never blur them:
+//   invalid_batter  — not an id at all; rejected locally, the feed is never called
+//   unknown_batter  — a well-formed id the feed explicitly says it does not know
+//   upstream_error  — the feed failed or rejected the request for another reason
+// None of these may say "no pitch data found": that claim is reserved for a feed
+// that actually answered with an empty list.
+
+test('a malformed batter id is rejected locally without calling the feed', async () => {
+  let calls = 0;
+  axios.get = async () => { calls++; return { data: { success: true, data: [] } }; };
+  await withServer(async port => {
+    for (const bad of ['..%2F..%2Fetc%2Fpasswd', "'%20OR%201%3D1--", 'a'.repeat(65), 'has%20space']) {
+      const res = await get(port, `/api/batter/card?batterIds=${bad}&startDate=${START}&endDate=${END}`);
+      assert.strictEqual(res.status, 400, `${bad}: ${res.body}`);
+      assert.strictEqual(JSON.parse(res.body).error, 'invalid_batter');
+    }
+  });
+  assert.strictEqual(calls, 0, 'the feed must not be called for a malformed id');
+});
+
+test('too many ids in one request is rejected', async () => {
+  const many = Array.from({ length: 21 }, (_, i) => `id-${i}`).join(',');
+  await withServer(async port => {
+    const res = await get(port, `/api/batter/card?batterIds=${many}&startDate=${START}&endDate=${END}`);
+    assert.strictEqual(res.status, 400, res.body);
+    assert.strictEqual(JSON.parse(res.body).error, 'invalid_batter');
+  });
+});
+
+test('an id the feed rejects as unknown is unknown_batter — not "feed down", not "no data"', async () => {
+  // SLUGGER's real response to an id it does not recognise.
+  axios.get = async () => {
+    const err = new Error('Request failed with status code 400');
+    err.response = { status: 400, data: {
+      success: false, message: 'Invalid request parameters',
+      errors: '1 validation error for PitchQueryParams\nbatter_id\n  value is not a valid uuid',
+    } };
+    throw err;
+  };
+  await withServer(async port => {
+    const res = await get(port, `/api/batter/card?batterIds=${BATTER}&startDate=${START}&endDate=${END}`);
+    assert.strictEqual(res.status, 404, res.body);
+    const body = JSON.parse(res.body);
+    assert.strictEqual(body.error, 'unknown_batter');
+    assert.ok(!/no pitch data found/i.test(body.message), body.message);
+    assert.ok(!/couldn't reach/i.test(body.message), 'the feed DID answer');
+  });
+});
+
+test('a 400 that does not name batter_id stays a 503 — it may be our own bug', async () => {
+  // A malformed date or parameter built by our code also earns a 400. Reporting
+  // that as "unknown batter" would blame the batter for a defect on our side.
+  axios.get = async () => {
+    const err = new Error('Request failed with status code 400');
+    err.response = { status: 400, data: { success: false, errors: 'date_range_start\n  invalid date' } };
+    throw err;
+  };
+  await withServer(async port => {
+    const res = await get(port, `/api/batter/card?batterIds=${BATTER}&startDate=${START}&endDate=${END}`);
+    assert.strictEqual(res.status, 503, res.body);
+    assert.strictEqual(JSON.parse(res.body).error, 'upstream_error');
+  });
+});
