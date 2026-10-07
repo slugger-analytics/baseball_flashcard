@@ -84,12 +84,18 @@ Object.assign(FlashcardApp.prototype, {
       title: `One page per hitter on the ${team.name} active roster, for ${formatRange(range)}`,
       onclick: () => this.printTeamPacket(team.name, team.batters)
     }, `Print team (${team.batters.length})`) : null;
+    const cardDetails = this.status === 'card' ? createElement('button', {
+      type: 'button',
+      className: 'toolbar__btn toolbar__btn--ghost',
+      'aria-pressed': this.showExpandedCard ? 'true' : 'false',
+      onclick: () => { this.showExpandedCard = !this.showExpandedCard; this.render(); }
+    }, this.showExpandedCard ? 'Hide details' : 'More details') : null;
 
     return createElement('div', { className: 'toolbar' },
       field('Team', teamControl),
       field('Hitter', this.buildHitterBox()),
       field('Dates', dateSelect, customRow, dateHint),
-      createElement('div', { className: 'toolbar__actions' }, printCard, printTeam)
+      createElement('div', { className: 'toolbar__actions' }, cardDetails, printCard, printTeam)
     );
   },
 

@@ -296,6 +296,49 @@ html, body {
   box-shadow: var(--shadow-md);
 }
 
+.widget.widget--compact {
+  grid-template-areas:
+    "header"
+    "pitch";
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.flashcard-body {
+  grid-area: pitch;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  background: #ffffff;
+  padding: 14px 16px 18px;
+}
+
+.widget--compact .pitch-zone-section {
+  grid-area: auto;
+  grid-column: 1 / -1;
+  padding: 0;
+}
+
+.quick-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-column: 1 / -1;
+  gap: 8px;
+  width: 100%;
+  margin-top: 4px;
+}
+
+.quick-summary__item {
+  background: #f8fafc;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  text-align: center;
+}
 .pitch-zone-section {
   grid-area: pitch;
   display: flex;

@@ -33,6 +33,7 @@ class FlashcardApp {
     this.customRange = savedRange.custom;
     this.showInfoPanel = false;
     this.showSettingsPanel = false;
+    this.showExpandedCard = false;
     // Settings live in an always-visible docked sidebar by default (never printed).
     // On mobile the docked sidebar stacks BELOW the card (see styles.css
     // @media max-width:768px), so it can start docked everywhere without covering

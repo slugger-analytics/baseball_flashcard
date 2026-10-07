@@ -75,7 +75,13 @@ Object.assign(FlashcardApp.prototype, {
   renderFlashcard() {
     const lineup = TEAMS_DATA[this.cardTeam];
     const data = lineup[this.cardIndex];
-    return createElement('div', { className: 'widget' },
+    const compactMode = !this.showExpandedCard;
+    const summaryItems = [
+      createElement('div', { className: 'quick-summary__item' }, `Hand: ${data.handedness || '—'}`),
+      createElement('div', { className: 'quick-summary__item' }, `Pitches: ${data.stats?.totalPitches || 0}`),
+      createElement('div', { className: 'quick-summary__item' }, `Steal: ${data.tendencies?.stealThreat || 'Low'}`),
+    ];
+    return createElement('div', { className: `widget${compactMode ? ' widget--compact' : ''}` },
       createElement('div', { className: 'header' },
         createElement('div', { className: 'header__title' },
           createElement('span', { className: 'name' }, data.batter || 'Unknown'),
@@ -128,6 +134,11 @@ Object.assign(FlashcardApp.prototype, {
         const { el: pitchZoneInner, count: renderedCount, available: availableCount } = createPitchZone(this._fullyFilteredPitches, data.handedness, this._bucketCtx);
         const pitchZoneEl = createElement('div', { className: 'pitch-zone-section' }, pitchZoneInner);
         const batterEl = createBatterGraphic(data.handedness, data.batter, renderedCount, availableCount);
+
+        if (compactMode) {
+          const summary = createElement('div', { className: 'quick-summary' }, ...summaryItems);
+          return createElement('div', { className: 'flashcard-body' }, pitchZoneEl, batterEl, summary);
+        }
 
         const frag = document.createDocumentFragment();
         frag.appendChild(pitchZoneEl);
