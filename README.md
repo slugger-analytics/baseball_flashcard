@@ -55,6 +55,14 @@ cp .env.example .env
 
 The `.env` file is gitignored — never commit it. See `.env.example` for all available variables.
 
+Besides the API key, `.env.example` lists optional overrides: the SLUGGER and iScore
+base URLs, the iScore league GUID behind the Team menu, the roster activity window and
+the port. All have working defaults.
+
+**Production does not read `.env`.** Its settings live in the Lambda function's own
+environment configuration. To change one in production — rotating the API key, or a
+new iScore league GUID next season — update it there (or change the default in code).
+
 ---
 
 ## Running Locally
@@ -256,8 +264,8 @@ methods with `Object.assign(FlashcardApp.prototype, …)`. Script order in `inde
 
 | File | Purpose |
 |---|---|
-| `contact_filter.py` | Python reference implementation of pitch contact classification (used for research/analysis, not the live server) |
-| `explore-dates.js` | One-off script for querying which dates have available game data |
+| `scripts/contact_filter.py` | Python reference implementation of pitch contact classification (used for research/analysis, not the live server) |
+| `scripts/explore-dates.js` | One-off script listing which pitch types the feed reports on a few sample dates |
 
 ---
 
