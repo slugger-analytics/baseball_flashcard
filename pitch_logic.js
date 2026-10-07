@@ -710,6 +710,62 @@ function planRangeChunks(startDate, endDate, chunkDays = 30) {
   return chunks;
 }
 
+// ── Team print-packet helpers ────────────────────────────────────────────────
+// Pure helpers behind the batter picker's "print every hitter" flow. They live
+// here rather than in app.js so node:test can exercise them without a DOM.
+//
+// Adapted from Evan's feat/zone-annotations-outpitch-teampacket branch. The one
+// substantive change: that version selected a roster with
+// `rosterForTeam(BATTERS_INDEX, teamName)`, matching on SLUGGER's team_name — a
+// field absent for 132 of 564 batters and unable to express a mid-season trade,
+// which is why it also had to report a `teamlessCount` of players it could not
+// place. The packet now runs over whatever pool the picker already has selected,
+// which is backed by iScore rosters, so no separate team lookup is needed and
+// nobody is silently excluded.
+
+/**
+ * Flattens a card response's teamsData into print order, most-seen profile first.
+ *
+ * One batter can yield two profiles: a switch hitter is keyed by name AND side, so
+ * he has an independent card from each box. Both print, with the side he has seen
+ * more pitches from leading. Array.prototype.sort is stable, so profiles with
+ * equal counts keep their incoming order.
+ *
+ * @param {Object} teamsData - Decoded teamsData from GET /api/batter/card.
+ * @returns {Array<Object>} Batter profiles in the order their pages should print.
+ */
+function orderProfilesForPrint(teamsData) {
+  const profiles = [];
+  for (const teamKey of Object.keys(teamsData || {})) {
+    for (const profile of (teamsData[teamKey] || [])) profiles.push(profile);
+  }
+  const pitchesOf = (p) => (p && p.stats && p.stats.totalPitches) || 0;
+  return profiles.sort((a, b) => pitchesOf(b) - pitchesOf(a));
+}
+
+/**
+ * The display settings a bulk packet renders under.
+ *
+ * Every card in a packet must be directly comparable, so the batter-scoped
+ * filters are neutralised: a hand filter or hidden pitch type left over from
+ * browsing one hitter would silently apply to all fifteen. Purely visual
+ * preferences (circle size, how many are displayed, colour sensitivity) are
+ * deliberately preserved — they are the user's reading preference, not a filter.
+ *
+ * @param {Object} current - The live CURRENT_SETTINGS.
+ * @returns {Object} A copy with the scoped filters reset.
+ */
+function bulkPrintSettings(current) {
+  return {
+    ...current,
+    pitcherHandFilter: 'All',
+    hiddenPitchTypes: [],
+    circleColorMode: 'both',
+    maxCirclesPerBucket: 1,
+    swingsOnly: false,
+  };
+}
+
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     WIN_OUTCOMES,
@@ -749,6 +805,8 @@ if (typeof module !== 'undefined' && module.exports) {
     rankZoneValues,
     computeBucketRatings,
     getVisiblePitches,
+    orderProfilesForPrint,
+    bulkPrintSettings,
     planRangeChunks,
   };
 }

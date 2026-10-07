@@ -830,6 +830,182 @@ printCurrentCard() {
       setTimeout(() => window.scrollTo(0, savedScroll), 500); 
     }, 150);
   }
+  /**
+   * Builds a printable packet for a whole roster, straight from the batter picker.
+   *
+   * Fetches each hitter's card sequentially using exactly the same query shape as
+   * selectBatter, so every request hits the same per-batter disk cache keys rather
+   * than warming a second set. Renders each profile into the lineup print
+   * container and shows a progress overlay with Print/Close when finished.
+   *
+   * The interactive card state (TEAMS_DATA, METADATA, selectedTeam,
+   * selectedBatterInfo) is deliberately never touched — a coach who was reading
+   * one hitter's card gets it back unchanged after printing the packet.
+   *
+   * Sequential rather than parallel on purpose: a roster is ~15 batters and each
+   * uncached fetch can page through thousands of pitches upstream, so firing them
+   * at once risks the request budget and gives no progress to show.
+   *
+   * @param {string} label - Display name for the packet (the club, normally).
+   * @param {Array<{name:string, ids:string[]}>} roster - Batters to include.
+   */
+  async printTeamPacket(label, roster) {
+    if (this.bulkPrint && this.bulkPrint.active) return; // re-entry guard
+    if (!roster || roster.length === 0) return;
+
+    this.bulkPrint = {
+      active: true, done: 0, total: roster.length, failures: [],
+      aborted: false, label, phase: 'building', currentName: null, pages: 0,
+    };
+    this.renderBulkPrintOverlay();
+
+    // Neutralise the batter-scoped filters so every card in the packet is
+    // comparable; restored in the finally around the whole loop.
+    const saved = CURRENT_SETTINGS;
+    CURRENT_SETTINGS = bulkPrintSettings(saved);
+
+    const singleContainer = this.getPrintContainer('print-container');
+    const lineupContainer = this.getPrintContainer('lineup-print-container');
+    singleContainer.innerHTML = '';
+    lineupContainer.innerHTML = '';
+
+    const season = getFullSeasonRange();
+    let pageIndex = 0;
+    try {
+      for (const batter of roster) {
+        if (this.bulkPrint.aborted) break;
+        this.bulkPrint.currentName = batter.name;
+        this.renderBulkPrintOverlay();
+        try {
+          const ids = encodeURIComponent((batter.ids || []).join(','));
+          const response = await fetch(
+            `./api/batter/card?batterIds=${ids}&startDate=${season.start}` +
+            `&endDate=${season.end}&maxVelocity=105&pitchGroup=All`
+          );
+          const data = await response.json();
+          if (!response.ok) {
+            this.bulkPrint.failures.push({ name: batter.name, reason: data.error || `HTTP ${response.status}` });
+          } else if (!data.teamsData || Object.keys(data.teamsData).length === 0) {
+            // Expected for a recent signing SLUGGER has not ingested yet — skip,
+            // record, and keep going rather than failing the whole packet.
+            this.bulkPrint.failures.push({ name: batter.name, reason: 'no_data' });
+          } else {
+            decodePitchZones(data.teamsData, data.metadata && data.metadata.pzLegend);
+            orderProfilesForPrint(data.teamsData).forEach(profile => {
+              lineupContainer.appendChild(this.buildPrintPage(profile, label, pageIndex++));
+            });
+          }
+        } catch (err) {
+          this.bulkPrint.failures.push({ name: batter.name, reason: (err && err.message) || 'error' });
+        }
+        this.bulkPrint.done++;
+        this.renderBulkPrintOverlay();
+      }
+    } finally {
+      CURRENT_SETTINGS = saved;
+    }
+
+    if (this.bulkPrint.aborted) {
+      singleContainer.innerHTML = '';
+      lineupContainer.innerHTML = '';
+      this.dismissBulkPrint();
+      return;
+    }
+
+    // Scale circles down for print, mirroring printLineup.
+    const printSize = Math.round(CURRENT_SETTINGS.pitchCircleSize * 0.75);
+    lineupContainer.querySelectorAll('.pitch-zone').forEach(el => {
+      el.style.setProperty('--pitch-circle-size', `${printSize}px`);
+    });
+
+    this.bulkPrint.phase = 'done';
+    this.bulkPrint.pages = pageIndex;
+    this.renderBulkPrintOverlay();
+  }
+
+  /**
+   * (Re)draws the bulk-print overlay from this.bulkPrint.
+   *
+   * Mounted on document.body rather than inside #app so it survives the picker's
+   * re-renders, and hidden from the printout by a @media print rule.
+   */
+  renderBulkPrintOverlay() {
+    const existing = document.getElementById('bulk-print-overlay');
+    if (existing) existing.remove();
+    const bp = this.bulkPrint;
+    if (!bp || !bp.active) return;
+
+    const skipped = bp.failures.length
+      ? `Skipped ${bp.failures.length}: ${bp.failures.map(f => f.name).join(', ')}`
+      : null;
+
+    let card;
+    if (bp.phase === 'done' && bp.pages === 0) {
+      card = createElement('div', { className: 'bulk-print-card' },
+        createElement('div', { className: 'bulk-print-title' }, 'No cards to print'),
+        createElement('div', { className: 'bulk-print-sub' },
+          skipped || 'No hitters on this roster returned pitch data.'),
+        createElement('div', { className: 'bulk-print-actions' },
+          createElement('button', { className: 'team-btn', onclick: () => this.dismissBulkPrint() }, 'Close')
+        )
+      );
+    } else if (bp.phase === 'done') {
+      card = createElement('div', { className: 'bulk-print-card' },
+        createElement('div', { className: 'bulk-print-title' },
+          `${bp.pages} page${bp.pages === 1 ? '' : 's'} ready`),
+        createElement('div', { className: 'bulk-print-sub' }, bp.label),
+        skipped ? createElement('div', { className: 'bulk-print-sub' }, skipped) : null,
+        createElement('div', { className: 'bulk-print-actions' },
+          createElement('button', { className: 'team-btn', onclick: () => this.printBulkPacket() }, 'Print'),
+          createElement('button', { className: 'team-btn team-btn--ghost', onclick: () => this.dismissBulkPrint() }, 'Close')
+        )
+      );
+    } else {
+      const current = Math.min(bp.done + 1, bp.total);
+      const pct = bp.total ? Math.round((bp.done / bp.total) * 100) : 0;
+      card = createElement('div', { className: 'bulk-print-card' },
+        createElement('div', { className: 'bulk-print-title' }, `Building packet: ${current} of ${bp.total}`),
+        createElement('div', { className: 'bulk-print-sub' }, bp.currentName || '…'),
+        createElement('div', { className: 'bulk-print-bar' },
+          createElement('div', { className: 'bulk-print-bar__fill', style: { width: `${pct}%` } })
+        ),
+        createElement('div', { className: 'bulk-print-actions' },
+          createElement('button', {
+            className: 'team-btn team-btn--ghost',
+            onclick: () => { if (this.bulkPrint) this.bulkPrint.aborted = true; }
+          }, 'Cancel')
+        )
+      );
+    }
+    document.body.appendChild(
+      createElement('div', { id: 'bulk-print-overlay', className: 'bulk-print-overlay' }, card));
+  }
+
+  /** Opens the print dialog for the assembled packet, then tidies up. */
+  printBulkPacket() {
+    const overlay = document.getElementById('bulk-print-overlay');
+    if (overlay) overlay.style.display = 'none'; // belt-and-braces; CSS also hides it
+    const savedScroll = window.scrollY;
+    setTimeout(() => {
+      window.print();
+      setTimeout(() => {
+        window.scrollTo(0, savedScroll);
+        this.dismissBulkPrint();
+      }, 500);
+    }, 150);
+  }
+
+  /** Clears the overlay and print containers, ending the bulk-print session. */
+  dismissBulkPrint() {
+    const overlay = document.getElementById('bulk-print-overlay');
+    if (overlay) overlay.remove();
+    try {
+      this.getPrintContainer('print-container').innerHTML = '';
+      this.getPrintContainer('lineup-print-container').innerHTML = '';
+    } catch (_) { /* containers may not exist yet */ }
+    this.bulkPrint = null;
+  }
+
   toggleInfo() {
     this.showInfoPanel = !this.showInfoPanel;
     this.render();
@@ -1914,6 +2090,23 @@ createElement('div', { style: { flex: 1 } },
     countEl = createElement('span', { className: 'info-bubble', id: 'batter-count' });
     updateCount();
 
+    // Team print packet. Offered only when a single club is in scope: the pool is
+    // then that club's iScore roster, so "every hitter" is a well-defined set.
+    // Under "All teams" it would mean 224 cards, and under "Everyone in SLUGGER"
+    // it would include players with no current club — neither is a packet anyone
+    // wants, so the row simply is not shown.
+    const scopedTeam = scope && scope !== 'ALL'
+      ? ROSTERS.find(t => t.guid === scope)
+      : null;
+    const packetRow = !scopedTeam ? null : createElement('div', { className: 'team-packet-row' },
+      createElement('span', { className: 'team-packet-label' }, 'Team print packet'),
+      createElement('button', {
+        id: 'packet-print-btn',
+        className: 'team-btn',
+        onclick: () => this.printTeamPacket(scopedTeam.name, scopedTeam.batters)
+      }, `Print all ${scopedTeam.batters.length} hitters`)
+    );
+
     return createElement('div', { className: 'team-select-screen' },
       createElement('h1', {}, 'Select a Batter'),
       createElement('p', { style: { 'margin-bottom': '14px', fontSize: '15px', color: '#64748b', lineHeight: '1.4' } },
@@ -1926,6 +2119,7 @@ createElement('div', { style: { flex: 1 } },
       createElement('div', { style: { textAlign: 'center', marginBottom: '12px' } },
         countEl
       ),
+      packetRow,
     );
   }
 

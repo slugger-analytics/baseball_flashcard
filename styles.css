@@ -2310,6 +2310,10 @@ button:active {
   .print-widget .threat-value,
   .print-widget .power-sequence-text { font-size: 11.5pt !important; }
 
+  /* The bulk-print overlay is a screen control, not content — it sits on
+     document.body, so without this it would print as a full grey page. */
+  .bulk-print-overlay { display: none !important; }
+
   /* Last line of defence: one card is one sheet. */
   .print-page {
     page-break-inside: avoid !important;
@@ -2640,4 +2644,91 @@ button:active {
     max-height: 100%;
     object-fit: contain;
   }
+}
+
+/* ── Team print packet ───────────────────────────────────────────────────────
+   Row under the batter picker, shown only when one club is in scope. */
+.team-packet-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  max-width: 620px;
+  margin: 4px auto 0;
+  padding: 12px 14px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+}
+
+.team-packet-label {
+  flex: 0 0 auto;
+  font-size: 13px;
+  font-weight: 600;
+  color: #475569;
+}
+
+/* Progress / confirm overlay while a packet builds. Mounted on document.body so
+   it survives picker re-renders. */
+.bulk-print-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 23, 42, 0.55);
+}
+
+.bulk-print-card {
+  width: min(92vw, 420px);
+  background: #ffffff;
+  border-radius: 14px;
+  padding: 22px 24px;
+  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.35);
+  text-align: center;
+}
+
+.bulk-print-title {
+  font-size: 17px;
+  font-weight: 700;
+  color: #0f172a;
+  margin-bottom: 6px;
+}
+
+.bulk-print-sub {
+  font-size: 13px;
+  color: #64748b;
+  line-height: 1.4;
+  margin-bottom: 4px;
+  overflow-wrap: anywhere;
+}
+
+.bulk-print-bar {
+  height: 8px;
+  margin: 14px 0 16px;
+  background: #e2e8f0;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.bulk-print-bar__fill {
+  height: 100%;
+  background: var(--accent, #3b82f6);
+  border-radius: 999px;
+  transition: width 0.2s ease;
+}
+
+.bulk-print-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.team-btn--ghost {
+  background: #ffffff;
+  color: #475569;
+  border: 1px solid #cbd5e1;
 }
