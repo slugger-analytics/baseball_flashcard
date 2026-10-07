@@ -106,8 +106,14 @@ jobs:
           # The static page can be green while the data path 502s — assert the API
           # itself works and ships the columnar format. A 7-day range answers in
           # seconds, so this is the deterministic gate.
+          # Anchor to the last day with games, not today. Off-season, "today - 7"
+          # holds no games, the API correctly answers 404 no_data, and this gate
+          # failed every deploy from 2026-10-07 even though prod was healthy.
+          # Keep SEASON_END in step with SEASON_END in server.js.
+          SEASON_END=2026-09-13
           END=$(date -u +%F)
-          START=$(date -u -d "7 days ago" +%F)
+          if [[ "$END" > "$SEASON_END" ]]; then END=$SEASON_END; fi
+          START=$(date -u -d "$END -6 days" +%F)
           URL="https://www.alpb-analytics.com/widgets/flashcard/api/teams/range?startDate=${START}&endDate=${END}&maxVelocity=105&pitchGroup=All"
           for i in 1 2 3; do
             code=$(curl -s --http1.1 -o /tmp/week.json -w "%{http_code}" --max-time 120 --compressed "$URL") || echo "curl exit: $?"
