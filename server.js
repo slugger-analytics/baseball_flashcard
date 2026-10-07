@@ -11,7 +11,9 @@ const {
   outPitchFinishLocation, finishingToken,
 } = require('./lib/stats.js');
 const { buildCanonicalNameMap, dedupeBatters } = require('./lib/players.js');
-const { buildRosters } = require('./lib/iscore.js');
+const {
+  buildRosters, activityWindow, latestTeamByBatter, ACTIVITY_WINDOW_DAYS,
+} = require('./lib/iscore.js');
 // Strike zone geometry is shared with the browser client (pitch_logic.js is also
 // loaded as a plain <script> before app.js), so the labels the server assigns and
 // the grid the client draws are guaranteed to describe the same rectangle.
@@ -92,11 +94,34 @@ if (BASE_PATH) {
 }
 
 const SLUGGER_CONFIG = {
-  baseUrl: "https://1ywv9dczq5.execute-api.us-east-2.amazonaws.com/ALPBAPI",
-  apiKey: process.env.SLUGGER_API_KEY 
+  // .env.example has documented SLUGGER_BASE_URL as an optional override since the
+  // beginning, but this was hardcoded and silently ignored it.
+  baseUrl: process.env.SLUGGER_BASE_URL
+    || 'https://1ywv9dczq5.execute-api.us-east-2.amazonaws.com/ALPBAPI',
+  apiKey: process.env.SLUGGER_API_KEY,
 };
 
 const lookupCache = { players: new Map(), teams: new Map(), ballparks: new Map(), canonicalNames: new Map() };
+
+// ALPB season calendar. Hardcoded by necessity — the feed exposes no schedule
+// endpoint — so these two dates need updating at the start of each season. They
+// live here, once: there were two byte-identical copies of getSeasonDefaults()
+// inline below, each with its own pair of literals, which is precisely how a
+// rollover gets half-applied.
+const SEASON_START = '2026-04-21';
+const SEASON_END = '2026-09-13';
+
+/**
+ * The default date range for a request that names none: the season so far, clamped
+ * to the season's own bounds.
+ * @returns {{start: string, end: string}}
+ */
+function getSeasonDefaults() {
+  const todayStr = new Date().toISOString().slice(0, 10);
+  if (todayStr < SEASON_START) return { start: SEASON_START, end: SEASON_START };
+  if (todayStr <= SEASON_END) return { start: SEASON_START, end: todayStr };
+  return { start: SEASON_START, end: SEASON_END };
+}
 
 const TEAM_DISPLAY_NAMES = {
   'YOR': 'York Revolution', 'LI': 'Long Island Ducks', 'LAN': 'Lancaster Stormers',
@@ -1415,14 +1440,6 @@ const teamsRangeHandler = async (req, res) => {
       return null;
     };
 
-    const getSeasonDefaults = () => {
-      const todayStr = new Date().toISOString().slice(0, 10);
-      const start = '2026-04-21';
-      if (todayStr < start) return { start, end: start };
-      if (todayStr <= '2026-09-13') return { start, end: todayStr };
-      return { start, end: '2026-09-13' };
-    };
-
     const parsedStart = parseDateInput(startDate);
     const parsedEnd = parseDateInput(endDate);
     const seasonDefaults = getSeasonDefaults();
@@ -1830,14 +1847,6 @@ function resolveDateRange(startDate, endDate) {
     return null;
   };
 
-  const getSeasonDefaults = () => {
-    const todayStr = new Date().toISOString().slice(0, 10);
-    const start = '2026-04-21';
-    if (todayStr < start) return { start, end: start };
-    if (todayStr <= '2026-09-13') return { start, end: todayStr };
-    return { start, end: '2026-09-13' };
-  };
-
   const seasonDefaults = getSeasonDefaults();
   const finalStartDate = parseDateInput(startDate) || seasonDefaults.start;
   const finalEndDate = parseDateInput(endDate) || seasonDefaults.end;
@@ -1922,7 +1931,31 @@ const rostersHandler = async (req, res) => {
       }
     }
 
-    const data = await buildRosters(axios, lookupCache.players.values());
+    // Narrow each club to the hitters actually playing for it. iScore's `active`
+    // flag is club-maintained and 40% of its roster entries belong to departed
+    // players, so the pitch feed decides: a hitter is on a club if his most recent
+    // pitch in the window was for it.
+    //
+    // Fails soft on purpose. The filter is an improvement on the roster, not a
+    // dependency of it — if this fetch is slow or upstream is down, serve the
+    // unfiltered iScore roster rather than an empty picker.
+    let activity = null;
+    try {
+      const season = getSeasonDefaults();
+      const window = activityWindow(season.end, ACTIVITY_WINDOW_DAYS);
+      const pitches = await fetchPitchesByDateRange(window.start, window.end);
+      activity = {
+        latestTeam: latestTeamByBatter(pitches),
+        codeToName: TEAM_DISPLAY_NAMES,
+        window,
+      };
+      console.log(`✅ Roster activity: ${activity.latestTeam.size} batters played ` +
+        `${window.start} → ${window.end}`);
+    } catch (err) {
+      console.error('Roster activity window unavailable, serving unfiltered rosters:', err.message);
+    }
+
+    const data = await buildRosters(axios, lookupCache.players.values(), undefined, activity);
     rosterMemo = { data, fetchedAt: Date.now() };
     try {
       fs.writeFileSync(rosterCachePath(), JSON.stringify(rosterMemo));
