@@ -710,6 +710,87 @@ function planRangeChunks(startDate, endDate, chunkDays = 30) {
   return chunks;
 }
 
+// ── Zone group annotations ───────────────────────────────────────────────────
+// "Low-Out is a weak spot" is useful; "Low-Out is a weak spot against breaking
+// balls" is a pitch call. These gates decide when a zone's vulnerability or
+// damage is attributable to ONE pitch family rather than spread across all three.
+//
+// Adapted from Evan's feat/zone-annotations-outpitch-teampacket branch (c41bad1).
+// That version carried its own PITCH_GROUP_TAXONOMY keyed on raw Trackman names
+// ('Four-Seam', 'Sinker', ...); this reuses pitchFamily(), so there is one
+// definition of what counts as a fastball instead of two that can drift.
+//
+// Splitting a zone three ways cuts the sample three ways, so the gates are
+// deliberately stricter than the zone-level ones: a family needs real presence in
+// the zone before its rate is allowed to mean anything.
+
+const ZONE_GROUP_MIN_PITCHES = 8;  // family presence in the zone
+const ZONE_GROUP_MIN_SWINGS = 4;   // before a whiff/weak rate is quoted
+const ZONE_GROUP_MIN_CONTACT = 3;  // before a hard-hit rate is quoted
+const ZONE_GROUP_EDGE = 0.25;      // how far above the zone's own rate to qualify
+
+/**
+ * Tags each zone with the pitch family driving its vulnerability and its damage.
+ *
+ * Mutates and returns `zoneAnalysis`, setting on each zone:
+ *   vg / vgN — family whose whiff+weak-contact rate clears the zone's by the edge
+ *   hg / hgN — family whose hard-hit rate clears the zone's by the edge
+ * and deleting the per-family `groups` cells afterwards. That deletion matters:
+ * zoneAnalysis ships on the wire, and 17 zones x 3 families of counters would
+ * bloat a response that already has to fit the ALB's 1 MB limit.
+ *
+ * A zone with no qualifying family is left unannotated rather than given its
+ * best-of-three — if the vulnerability is spread evenly, naming one family would
+ * invent a pattern.
+ *
+ * @param {Object} zoneAnalysis - Per-zone counters, each carrying a `groups` map.
+ * @returns {Object} The same object, annotated.
+ */
+function annotateZoneGroups(zoneAnalysis) {
+  if (!zoneAnalysis) return zoneAnalysis;
+  const factor = 1 + ZONE_GROUP_EDGE;
+
+  for (const zone of Object.values(zoneAnalysis)) {
+    const groups = zone && zone.groups;
+    if (!groups) continue;
+
+    const zoneSwings = zone.swings || 0;
+    const zoneContact = zone.contact || 0;
+    const zoneVulnRate = zoneSwings > 0
+      ? ((zone.whiffs || 0) + (zone.weakContact || 0)) / zoneSwings : 0;
+    const zoneHotRate = zoneContact > 0 ? (zone.hardHits || 0) / zoneContact : 0;
+
+    let bestVuln = null;
+    let bestHot = null;
+
+    for (const family of Object.keys(groups)) {
+      const cell = groups[family];
+      if ((cell.pitches || 0) < ZONE_GROUP_MIN_PITCHES) continue;
+
+      const cellSwings = cell.swings || 0;
+      if (cellSwings >= ZONE_GROUP_MIN_SWINGS && zoneVulnRate > 0) {
+        const rate = ((cell.whiffs || 0) + (cell.weakContact || 0)) / cellSwings;
+        if (rate >= zoneVulnRate * factor && (!bestVuln || rate > bestVuln.rate)) {
+          bestVuln = { family, n: cell.pitches, rate };
+        }
+      }
+
+      const cellContact = cell.contact || 0;
+      if (cellContact >= ZONE_GROUP_MIN_CONTACT && zoneHotRate > 0) {
+        const rate = (cell.hardHits || 0) / cellContact;
+        if (rate >= zoneHotRate * factor && (!bestHot || rate > bestHot.rate)) {
+          bestHot = { family, n: cell.pitches, rate };
+        }
+      }
+    }
+
+    if (bestVuln) { zone.vg = bestVuln.family; zone.vgN = bestVuln.n; }
+    if (bestHot) { zone.hg = bestHot.family; zone.hgN = bestHot.n; }
+    delete zone.groups;
+  }
+  return zoneAnalysis;
+}
+
 // ── Team print-packet helpers ────────────────────────────────────────────────
 // Pure helpers behind the batter picker's "print every hitter" flow. They live
 // here rather than in app.js so node:test can exercise them without a DOM.
@@ -807,6 +888,11 @@ if (typeof module !== 'undefined' && module.exports) {
     getVisiblePitches,
     orderProfilesForPrint,
     bulkPrintSettings,
+    ZONE_GROUP_MIN_PITCHES,
+    ZONE_GROUP_MIN_SWINGS,
+    ZONE_GROUP_MIN_CONTACT,
+    ZONE_GROUP_EDGE,
+    annotateZoneGroups,
     planRangeChunks,
   };
 }

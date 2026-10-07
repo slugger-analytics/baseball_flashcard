@@ -602,6 +602,16 @@ const stripPercents = (text) => {
     else if (tendencies.firstStrikeLeagueAvg != null) firstPitchSubtext = `lg avg ${tendencies.firstStrikeLeagueAvg}%`;
   }
   let sprayText = tendencies?.spray || 'All fields';
+
+  // The server tags a zone with the pitch family driving it (vg/hg) only when ONE
+  // family clearly does — see annotateZoneGroups. "Low-Out is a weak spot" is
+  // useful; "Low-Out is a weak spot against breaking balls" is a pitch call.
+  const familyNote = (zone, key, verb) => {
+    const ann = zoneAnalysis && zoneAnalysis[zone];
+    if (!ann || !ann[key]) return '';
+    const label = FAMILY_LABEL[ann[key]] || ann[key];
+    return ` — ${verb} ${label} (n=${ann[`${key}N`]})`;
+  };
   const cleanedPowerSequence = stripPercents(
   (powerSequence && powerSequence !== 'Calculating...') ? powerSequence : 'Insufficient data'
 );
@@ -624,7 +634,8 @@ const stripPercents = (text) => {
       ),
       createElement('div', { className: 'power-sequence-text' },
         cappedVulnerableZones.slice(0, 2)
-          .map(z => `${z.zone} (${z.score}; ${z.swings} swings, ${z.exitSpeedCount} EV)`).join(', ')),
+          .map(z => `${z.zone} (${z.score}; ${z.swings} swings, ${z.exitSpeedCount} EV)`
+            + familyNote(z.zone, 'vg', 'vs')).join(', ')),
     ) : null,
     hotZones.length > 0 ? createElement('div', { className: 'power-sequence hot-zone' },
       createElement('h4', { style: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' } },
@@ -632,7 +643,8 @@ const stripPercents = (text) => {
         createElement('button', { className: 'section-info-btn', onclick: (e) => { e.stopPropagation(); openInfoModal('hot'); } }, 'ℹ')
       ),
       createElement('div', { className: 'power-sequence-text' },
-        hotZones.slice(0, 2).map(z => `${z.zone} (${z.hardHitPct}% of ${z.exitSpeedCount} tracked)`).join(', ') || 'None identified'),
+        hotZones.slice(0, 2).map(z => `${z.zone} (${z.hardHitPct}% of ${z.exitSpeedCount} tracked)`
+          + familyNote(z.zone, 'hg', 'feeds')).join(', ') || 'None identified'),
     ) : null,
     createElement('div', { className: 'power-sequence out-sequence' },
       createElement('h4', { style: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' } },

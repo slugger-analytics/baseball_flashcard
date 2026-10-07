@@ -15,7 +15,9 @@ const { buildRosters } = require('./lib/iscore.js');
 // Strike zone geometry is shared with the browser client (pitch_logic.js is also
 // loaded as a plain <script> before app.js), so the labels the server assigns and
 // the grid the client draws are guaranteed to describe the same rectangle.
-const { getZoneFromLocation, plateToPercent } = require('./pitch_logic.js');
+const {
+  getZoneFromLocation, plateToPercent, pitchFamily, annotateZoneGroups,
+} = require('./pitch_logic.js');
 
 // Lambda's filesystem is read-only except /tmp; use /tmp there, local cache/
 // elsewhere. Note /tmp lives and dies with the execution container, so a cold
@@ -874,15 +876,22 @@ function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 9
       const zone = getZoneFromLocation(zoneAnalysisSide, zoneAnalysisHeight, batterData.handedness);
       const pitcherHand = pitch.pitcher_throws === 'Left' ? 'L' : 'R';
       if (!batterData.zoneAnalysis[zone]) {
-        batterData.zoneAnalysis[zone] = { pitches: 0, swings: 0, whiffs: 0, fouls: 0, weakContact: 0, hardHits: 0, contact: 0, ballsInPlay: 0, exitSpeedCount: 0, calledStrikes: 0, balls: 0, contactOuts: 0, contactHits: 0 };
+        batterData.zoneAnalysis[zone] = { pitches: 0, swings: 0, whiffs: 0, fouls: 0, weakContact: 0, hardHits: 0, contact: 0, ballsInPlay: 0, exitSpeedCount: 0, calledStrikes: 0, balls: 0, contactOuts: 0, contactHits: 0, groups: {} };
       }
 
       const zoneStats = batterData.zoneAnalysis[zone];
+      // Per-family cell within this zone. annotateZoneGroups reads these to decide
+      // whether one family drives the zone, then deletes them — they must never
+      // reach the wire (17 zones x 3 families of counters on a 1 MB budget).
+      const family = pitchFamily(pitchType);
+      const cell = zoneStats.groups[family]
+        || (zoneStats.groups[family] = { pitches: 0, swings: 0, whiffs: 0, weakContact: 0, contact: 0, hardHits: 0 });
+      cell.pitches++;
       zoneStats.pitches++;
-      if (['StrikeSwinging', 'FoulBall', 'FoulBallFieldable', 'FoulBallNotFieldable', 'InPlay'].includes(pitch.pitch_call)) zoneStats.swings++;
-      if (pitch.pitch_call === 'StrikeSwinging') zoneStats.whiffs++;
+      if (['StrikeSwinging', 'FoulBall', 'FoulBallFieldable', 'FoulBallNotFieldable', 'InPlay'].includes(pitch.pitch_call)) { zoneStats.swings++; cell.swings++; }
+      if (pitch.pitch_call === 'StrikeSwinging') { zoneStats.whiffs++; cell.whiffs++; }
       if (['FoulBall', 'FoulBallFieldable', 'FoulBallNotFieldable'].includes(pitch.pitch_call)) zoneStats.fouls++;
-      if (['FoulBall', 'FoulBallFieldable', 'FoulBallNotFieldable', 'InPlay'].includes(pitch.pitch_call)) zoneStats.contact++;
+      if (['FoulBall', 'FoulBallFieldable', 'FoulBallNotFieldable', 'InPlay'].includes(pitch.pitch_call)) { zoneStats.contact++; cell.contact++; }
       if (pitch.pitch_call === 'StrikeCalled') zoneStats.calledStrikes++;
       if (pitch.pitch_call === 'BallCalled') zoneStats.balls++;
       if (pitch.pitch_call === 'InPlay') {
@@ -890,8 +899,8 @@ function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 9
         const exitSpeed = Number(pitch.exit_speed);
         if (pitch.exit_speed != null && pitch.exit_speed !== '' && Number.isFinite(exitSpeed)) {
           zoneStats.exitSpeedCount++;
-          if (exitSpeed >= 95) zoneStats.hardHits++;
-          else if (exitSpeed < 70) zoneStats.weakContact++;
+          if (exitSpeed >= 95) { zoneStats.hardHits++; cell.hardHits++; }
+          else if (exitSpeed < 70) { zoneStats.weakContact++; cell.weakContact++; }
         }
       }
       if (pitch.pitch_call === 'InPlay' && pitch.play_result) {
@@ -926,6 +935,12 @@ function transformPitchDataToTeams(pitchData, existingData = {}, maxVelocity = 9
 
   Object.values(teamsData).forEach(batters => {
     batters.forEach(batter => {
+      // Attribute each zone's vulnerability/damage to a pitch family where one
+      // family clearly drives it, then strip the per-family cells. Runs for every
+      // batter, including those with no pitches, so `groups` can never leak onto
+      // the wire.
+      annotateZoneGroups(batter.zoneAnalysis);
+
       if (batter.stats.totalPitches > 0) {
         // First-pitch approach: metric = swings / PA′ over 0-0 pitches, classified
         // against the pooled league average (±25%). Missing league avg → Neutral +
