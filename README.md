@@ -76,7 +76,7 @@ npm run dev
 The app uses a three-tier architecture:
 
 ```
-Browser (index.html + frontend.js + app.js)
+Browser (index.html + pitch_logic.js + app.js)
     ↕  JSON over HTTP
 Express Middleware Server (server.js)
     ↕  REST + x-api-key
@@ -208,11 +208,13 @@ BIS ±15° pull/opposite-field boundaries, with handedness flip applied (pull si
 |---|---|
 | `server.js` | Main Express server — API routes, data aggregation, disk cache, weakness zone computation |
 | `index.html` | Single-page app shell served to the browser |
-| `app.js` | Compiled/bundled client-side application logic |
-| `frontend.js` | Source client-side JS (date picker, UI interactions, card rendering) |
+| `app.js` | Client-side application — rendering, picker, print paths (hand-written, no build step) |
+| `pitch_logic.js` | Shared pure logic: strike zone, pitch families, bucket ratings. Loaded in the browser AND required by server.js, so both describe the same zone |
+| `lib/iscore.js` | iScore roster fetch and iScore→SLUGGER hitter name matching |
+| `lib/stats.js` | First-pitch approach and out-pitch finish location |
+| `lib/players.js` | Canonical player names and batter de-duplication |
 | `styles.css` | Flashcard UI stylesheet |
-| `lhb.svg` / `rhb.svg` | Full strike zone diagrams for left/right-handed batters |
-| `left-hand-batter.svg` / `right-hand-batter.svg` | Batter silhouette graphics |
+| `lhb.svg` / `rhb.svg` | Batter silhouettes flanking the strike zone (pitcher's perspective) |
 
 ### Configuration & deployment
 
