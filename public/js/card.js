@@ -84,7 +84,17 @@ Object.assign(FlashcardApp.prototype, {
     return createElement('div', { className: `widget${compactMode ? ' widget--compact' : ''}` },
       createElement('div', { className: 'header' },
         createElement('div', { className: 'header__title' },
+          createElement('button', {
+            className: 'card-nav-btn',
+            title: 'Previous hitter',
+            onclick: () => this.gotoAdjacentBatter(-1)
+          }, '‹'),
           createElement('span', { className: 'name' }, data.batter || 'Unknown'),
+          createElement('button', {
+            className: 'card-nav-btn',
+            title: 'Next hitter',
+            onclick: () => this.gotoAdjacentBatter(1)
+          }, '›'),
           createElement('span', { className: `mini-card-hand ${data.handedness}` }, data.handedness || ''),
           createElement('span', { className: 'meta' }, `• ${data.stats?.totalPitches || 0} pitches`),
           METADATA ? createElement('span', { className: 'meta' }, `• ${formatRange({ start: METADATA.startDate, end: METADATA.endDate })}`) : null,
@@ -100,7 +110,14 @@ Object.assign(FlashcardApp.prototype, {
             className: 'settings-btn settings-btn--labeled',
             title: this.isSettingsDocked ? 'Hide the settings panel' : 'Show the settings panel',
             onclick: () => this.toggleSettings()
-          }, this.isSettingsDocked ? '⚙ Hide Settings' : '⚙ Show Settings')
+          }, this.isSettingsDocked ? '⚙ Hide Settings' : '⚙ Show Settings'),
+          createElement('button', {
+            className: 'settings-btn settings-btn--ghost',
+            type: 'button',
+            'aria-pressed': this.showExpandedCard ? 'true' : 'false',
+            title: this.showExpandedCard ? 'Hide expanded details' : 'Show expanded details',
+            onclick: () => { this.showExpandedCard = !this.showExpandedCard; this.render(); }
+          }, this.showExpandedCard ? 'Hide details' : 'Show details')
         ),
         // A switch hitter is two profiles (one per side); let the coach flip between them.
         lineup.length > 1 ? createElement('div', { className: 'header__controls' },

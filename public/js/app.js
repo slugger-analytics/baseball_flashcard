@@ -34,6 +34,7 @@ class FlashcardApp {
     this.showInfoPanel = false;
     this.showSettingsPanel = false;
     this.showExpandedCard = false;
+    this.prefetchCache = new Map();
     // Settings live in an always-visible docked sidebar by default (never printed).
     // On mobile the docked sidebar stacks BELOW the card (see styles.css
     // @media max-width:768px), so it can start docked everywhere without covering
@@ -172,6 +173,13 @@ class FlashcardApp {
     this.selectedBatterInfo = batter;
     this.batterQuery = '';
     this.resetBatterScopedSettings();
+
+    const key = this.batterCacheKey(batter);
+    if (key && this.prefetchCache.has(key)) {
+      const cached = this.prefetchCache.get(key);
+      if (this.applyCardData(cached)) return;
+    }
+
     this.loadBatterCard();
   }
 
@@ -189,6 +197,8 @@ class FlashcardApp {
     const next = idx < 0
       ? pool[delta > 0 ? 0 : pool.length - 1]
       : pool[(idx + delta + pool.length) % pool.length];
+
+    this.prefetchAdjacentBatter(next);
     this.selectBatter(next);
   }
 
@@ -282,6 +292,85 @@ class FlashcardApp {
     this.renderToolbar();
   }
 
+  batterCacheKey(batter) {
+    if (!batter || !Array.isArray(batter.ids) || !batter.ids.length) return null;
+    const range = this.currentRange();
+    return [
+      batter.ids.slice().sort().join('|'),
+      range.start,
+      range.end,
+      this.lastMaxVelocity,
+      this.lastPitchGroup,
+    ].join('::');
+  }
+
+  applyCardData(data) {
+    if (!data || !data.teamsData || Object.keys(data.teamsData).length === 0) {
+      return false;
+    }
+
+    decodePitchZones(data.teamsData, data.metadata && data.metadata.pzLegend);
+    TEAMS_DATA = data.teamsData;
+    METADATA = data.metadata;
+
+    const teamKeys = Object.keys(TEAMS_DATA);
+    this.cardTeam = teamKeys.reduce((best, t) => {
+      const tp = TEAMS_DATA[t].reduce((s, b) => s + (b.stats?.totalPitches || 0), 0);
+      const bp = TEAMS_DATA[best].reduce((s, b) => s + (b.stats?.totalPitches || 0), 0);
+      return tp > bp ? t : best;
+    }, teamKeys[0]);
+    const roster = TEAMS_DATA[this.cardTeam];
+    this.cardIndex = roster.reduce((best, b, i) =>
+      (b.stats?.totalPitches || 0) > (roster[best].stats?.totalPitches || 0) ? i : best, 0);
+
+    this.status = 'card';
+    this.render();
+    this.prefetchVisibleNeighbors();
+    return true;
+  }
+
+  async prefetchAdjacentBatter(batter) {
+    if (!batter || !Array.isArray(batter.ids) || !batter.ids.length) return;
+    const key = this.batterCacheKey(batter);
+    if (!key || this.prefetchCache.has(key)) return;
+
+    const range = this.currentRange();
+    const ids = encodeURIComponent(batter.ids.join(','));
+    const maxVelocity = this.lastMaxVelocity;
+    const pitchGroup = this.lastPitchGroup;
+
+    try {
+      const response = await fetch(
+        `./api/batter/card?batterIds=${ids}&startDate=${range.start}&endDate=${range.end}&maxVelocity=${maxVelocity}&pitchGroup=${pitchGroup}`
+      );
+      if (!response.ok) return;
+      const data = await response.json();
+      if (!data || !data.teamsData || Object.keys(data.teamsData).length === 0) return;
+      this.prefetchCache.set(key, data);
+    } catch (_) {
+      // Ignore background-prefetch failures; the user can still fetch normally.
+    }
+  }
+
+  prefetchVisibleNeighbors() {
+    const batter = this.selectedBatterInfo;
+    if (!batter || !Array.isArray(batter.ids) || !batter.ids.length) return;
+
+    const pool = this.hitterPool().sort((a, b) => a.name.localeCompare(b.name));
+    if (!pool.length) return;
+
+    const curIds = new Set(batter.ids);
+    const idx = pool.findIndex(b => (b.ids || []).some(id => curIds.has(id)));
+    if (idx < 0) return;
+
+    const neighbors = [
+      pool[(idx - 1 + pool.length) % pool.length],
+      pool[(idx + 1) % pool.length],
+    ].filter(Boolean);
+
+    neighbors.forEach(next => this.prefetchAdjacentBatter(next));
+  }
+
   /**
    * Fetches the selected hitter's card for the toolbar's date window from
    * GET /api/batter/card (filtered by batter_id — never the whole pitch space).
@@ -295,6 +384,15 @@ class FlashcardApp {
       this.render();
       return;
     }
+
+    const key = this.batterCacheKey(batter);
+    if (key && this.prefetchCache.has(key)) {
+      const cached = this.prefetchCache.get(key);
+      if (this.applyCardData(cached)) {
+        return;
+      }
+    }
+
     const range = this.currentRange();
     const maxVelocity = this.lastMaxVelocity;
     const pitchGroup = this.lastPitchGroup;
@@ -336,25 +434,8 @@ class FlashcardApp {
         return;
       }
 
-      decodePitchZones(data.teamsData, data.metadata && data.metadata.pzLegend);
-      TEAMS_DATA = data.teamsData;
-      METADATA = data.metadata;
-
-      // The scoped response holds only this batter (two profiles if a switch hitter,
-      // split across teams only if traded mid-season). Show the profile with the most
-      // pitches so a switch hitter opens on his primary side.
-      const teamKeys = Object.keys(TEAMS_DATA);
-      this.cardTeam = teamKeys.reduce((best, t) => {
-        const tp = TEAMS_DATA[t].reduce((s, b) => s + (b.stats?.totalPitches || 0), 0);
-        const bp = TEAMS_DATA[best].reduce((s, b) => s + (b.stats?.totalPitches || 0), 0);
-        return tp > bp ? t : best;
-      }, teamKeys[0]);
-      const roster = TEAMS_DATA[this.cardTeam];
-      this.cardIndex = roster.reduce((best, b, i) =>
-        (b.stats?.totalPitches || 0) > (roster[best].stats?.totalPitches || 0) ? i : best, 0);
-
-      this.status = 'card';
-      this.render();
+      if (key) this.prefetchCache.set(key, data);
+      this.applyCardData(data);
     } catch (err) {
       if (superseded()) return;
       console.error(err);

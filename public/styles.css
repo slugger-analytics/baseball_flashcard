@@ -296,6 +296,29 @@ html, body {
   box-shadow: var(--shadow-md);
 }
 
+.card-nav-btn {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: #ffffff;
+  color: var(--text);
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.15s ease, border-color 0.15s ease;
+}
+
+.card-nav-btn:hover {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+
 .widget.widget--compact {
   grid-template-areas:
     "header"
@@ -527,6 +550,21 @@ html, body {
 }
 
 .settings-btn { background: #fdba74; color: #c2410c; }
+
+.settings-btn.settings-btn--ghost {
+  width: auto !important;
+  min-width: 94px;
+  height: 36px;
+  padding: 0 12px !important;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  flex-shrink: 0;
+}
 
 /* Labeled variant: text button, not a fixed icon square */
 .settings-btn.settings-btn--labeled {
