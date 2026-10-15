@@ -28,7 +28,7 @@ For each hitter the card shows the strike zone with pitcher-win ratings by pitch
 
 ## Prerequisites
 
-- **Node.js** v14.0.0 or higher — [nodejs.org](https://nodejs.org)
+- **Node.js** v18.0.0 or higher — [nodejs.org](https://nodejs.org)
 - **npm** — bundled with Node.js
 - A valid **SLUGGER API key** — contact the SARG team or the ALPB platform administrators
 
@@ -57,7 +57,13 @@ The `.env` file is gitignored — never commit it. See `.env.example` for all av
 
 Besides the API key, `.env.example` lists optional overrides: the SLUGGER and iScore
 base URLs, the iScore league GUID behind the Team menu, the roster activity window and
-the port. All have working defaults.
+the port, plus the per-process batter-card rate limit. All have working defaults.
+
+The card endpoint allows 60 requests per minute per server process by default. Lambda
+execution environments do not share this in-memory limit; configure AWS WAF on the
+shared ALB for a deployment-wide quota. Batter-specific disk caches expire after 30 days
+and are pruned at server startup. Card requests accept date ranges up to 370 inclusive
+calendar days.
 
 **Production does not read `.env`.** Its settings live in the Lambda function's own
 environment configuration. To change one in production — rotating the API key, or a

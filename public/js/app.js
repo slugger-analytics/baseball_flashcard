@@ -170,6 +170,7 @@ class FlashcardApp {
    * @param {{name:string, ids:string[], team:string, bats:string}} batter
    */
   selectBatter(batter) {
+    this.cardRequest = (this.cardRequest || 0) + 1;
     this.selectedBatterInfo = batter;
     this.batterQuery = '';
     this.resetBatterScopedSettings();
@@ -378,6 +379,9 @@ class FlashcardApp {
    * quickly through a roster never paints a stale card.
    */
   async loadBatterCard() {
+    const token = (this.cardRequest || 0) + 1;
+    this.cardRequest = token;
+    const superseded = () => token !== this.cardRequest;
     const batter = this.selectedBatterInfo;
     if (!batter || !batter.ids || batter.ids.length === 0) {
       this.status = 'idle';
@@ -396,10 +400,6 @@ class FlashcardApp {
     const range = this.currentRange();
     const maxVelocity = this.lastMaxVelocity;
     const pitchGroup = this.lastPitchGroup;
-    const token = (this.cardRequest || 0) + 1;
-    this.cardRequest = token;
-    const superseded = () => token !== this.cardRequest;
-
     this.status = 'loading';
     const pitchLabel = { All: 'All Pitches', Fastballs: 'Fastballs', Breaking: 'Breaking Balls', Offspeed: 'Offspeed' }[pitchGroup] || 'All Pitches';
     this.loadingParams = { batterName: batter.name, rangeLabel: formatRange(range), pitchGroup: pitchLabel, maxVelocity };

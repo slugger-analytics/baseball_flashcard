@@ -3,13 +3,24 @@ require('dotenv').config();
 const path = require('path');
 const express = require('express');
 const cors = require('cors');
+const { rateLimit } = require('express-rate-limit');
 const { BASE_PATH } = require('./lib/config.js');
 const { lookupCache, populateLookupCaches } = require('./lib/lookup.js');
 const { resetLeagueFirstPitch } = require('./lib/league_baseline.js');
+const { pruneExpiredBatterCaches } = require('./lib/pitch_cache.js');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+if (process.env.AWS_LAMBDA_FUNCTION_NAME) app.set('trust proxy', 1);
+
+const cardRateLimit = rateLimit({
+  windowMs: Number(process.env.CARD_RATE_LIMIT_WINDOW_MS) || 60_000,
+  limit: Number(process.env.CARD_RATE_LIMIT_MAX) || 60,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  message: { error: 'rate_limited', message: 'Too many card requests. Please try again shortly.' },
+});
 
 // Root health check endpoint for Lambda Web Adapter (must be at root level), and
 // again at BASE_PATH for ALB routing. Registered before the request logger so the
@@ -59,6 +70,7 @@ if (BASE_PATH) {
 
 // API routes, mounted once at the root and once at BASE_PATH for ALB routing.
 const api = express.Router();
+api.use('/api/batter/card', cardRateLimit);
 api.use(require('./routes/status.js'));
 api.use(require('./routes/batters.js'));
 api.use(require('./routes/batter_card.js'));
@@ -72,16 +84,15 @@ app.use((err, req, res, next) => {
   console.error(`[${timestamp}] ERROR: ${err.message}`);
   console.error(`[${timestamp}] Stack trace:`, err.stack);
 
-  res.status(500).json({
-    error: 'Internal server error',
-    timestamp: timestamp
-  });
+  res.status(500).json({ error: 'internal_error', message: 'An internal server error occurred.', timestamp });
 });
 
 // Environment-based port configuration for Lambda compatibility
 const PORT = process.env.PORT || 8080;
 
 async function startServer() {
+  const expiredBatterCaches = pruneExpiredBatterCaches();
+  if (expiredBatterCaches) console.log(`Pruned ${expiredBatterCaches} expired batter cache file(s)`);
   await populateLookupCaches();
   app.listen(PORT, () => {
     console.log(`✅ Server running on http://localhost:${PORT}/\n`);

@@ -2,6 +2,29 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const { seasonRange, rangeForPreset, formatRange } = require('../public/js/pitch_logic.js');
+const { parseDateInput, resolveDateRange, MAX_DATE_RANGE_DAYS } = require('../lib/dates.js');
+
+test('server date parser accepts supported formats and rejects invalid calendar dates', () => {
+  assert.strictEqual(parseDateInput('2026-05-01'), '2026-05-01');
+  assert.strictEqual(parseDateInput('20260501'), '2026-05-01');
+  assert.strictEqual(parseDateInput('05-01-2026'), '2026-05-01');
+  assert.strictEqual(parseDateInput('2026-02-30'), null);
+  assert.strictEqual(parseDateInput('not-a-date'), null);
+});
+
+test('server range validation keeps omitted defaults and enforces an inclusive maximum', () => {
+  const defaults = resolveDateRange(undefined, undefined);
+  assert.ok(defaults.finalStartDate);
+  assert.ok(defaults.finalEndDate);
+  assert.deepStrictEqual(resolveDateRange('2026-05-01', '2026-05-01'), {
+    finalStartDate: '2026-05-01', finalEndDate: '2026-05-01'
+  });
+  assert.strictEqual(resolveDateRange('2026-02-30', '2026-03-01').error, 'invalid_date');
+  assert.strictEqual(resolveDateRange('2025-01-01', '2026-01-06').error, 'range_too_large');
+  assert.ok(!resolveDateRange('2025-01-01', new Date(Date.UTC(2025, 0, MAX_DATE_RANGE_DAYS - 1)).toISOString().slice(0, 10)).error);
+  const farFuture = new Date(Date.now() + 400 * 86400000).toISOString().slice(0, 10);
+  assert.strictEqual(resolveDateRange('2025-01-01', farFuture).error, 'future_date');
+});
 
 test('in season, the season runs from opening day through today', () => {
   assert.deepStrictEqual(seasonRange('2026-06-15'), { start: '2026-04-21', end: '2026-06-15', year: 2026 });

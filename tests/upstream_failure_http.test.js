@@ -144,6 +144,25 @@ test('too many ids in one request is rejected', async () => {
   });
 });
 
+test('invalid date and velocity inputs are rejected before the feed is called', async () => {
+  let calls = 0;
+  axios.get = async () => { calls++; return { data: { success: true, data: [] } }; };
+  await withServer(async port => {
+    for (const query of [
+      `startDate=2026-02-30&endDate=${END}`,
+      `startDate=not-a-date&endDate=${END}`,
+      `startDate=2025-01-01&endDate=2026-01-06`,
+      `startDate=${START}&endDate=${END}&maxVelocity=abc`,
+      `startDate=${START}&endDate=${END}&maxVelocity=80.5`,
+      `startDate=${START}&endDate=${END}&maxVelocity=106`,
+    ]) {
+      const res = await get(port, `/api/batter/card?batterIds=${BATTER}&${query}`);
+      assert.strictEqual(res.status, 400, `${query}: ${res.body}`);
+    }
+  });
+  assert.strictEqual(calls, 0, 'invalid requests must not call the upstream feed');
+});
+
 test('an id the feed rejects as unknown is unknown_batter — not "feed down", not "no data"', async () => {
   // SLUGGER's real response to an id it does not recognise.
   axios.get = async () => {

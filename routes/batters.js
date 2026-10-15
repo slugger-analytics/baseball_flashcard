@@ -34,7 +34,7 @@ router.get('/api/batters', async (req, res) => {
     res.json({ batters, count: batters.length });
   } catch (error) {
     console.error('Error building batter list:', error.message);
-    res.status(500).json({ error: 'batters_failed', message: error.message });
+    res.status(500).json({ error: 'batters_failed', message: 'Unable to load the batter list.' });
   }
 });
 
@@ -54,7 +54,7 @@ router.get('/api/rosters', async (req, res) => {
   } catch (error) {
     console.error('Error building rosters:', error.message);
     // The batter picker must still work without iScore, so this stays non-fatal.
-    res.status(502).json({ error: 'rosters_failed', message: error.message, teams: [], unmatched: [] });
+    res.status(502).json({ error: 'rosters_failed', message: 'Unable to load team rosters.', teams: [], unmatched: [] });
   }
 });
 

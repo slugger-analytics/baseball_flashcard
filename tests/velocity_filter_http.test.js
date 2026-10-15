@@ -59,3 +59,21 @@ test('/api/batter/card?maxVelocity=80 drops pitches faster than 80mph from pz', 
     try { fs.unlinkSync(SEED_FILE); } catch (_) { /* best effort */ }
   }
 });
+
+test('maxVelocity=105 is treated as no cap', async () => {
+  fs.mkdirSync(CACHE_DIR, { recursive: true });
+  fs.writeFileSync(SEED_FILE, JSON.stringify([mkPitch(95), mkPitch(75)]));
+
+  const server = app.listen(0);
+  await new Promise(r => server.on('listening', r));
+  const port = server.address().port;
+  try {
+    const res = await get(port, `/api/batter/card?batterIds=${BATTER_ID}&startDate=${START}&endDate=${END}&maxVelocity=105`);
+    assert.strictEqual(res.status, 200, res.body);
+    const batters = Object.values(JSON.parse(res.body).teamsData).flat();
+    assert.strictEqual(batters[0].pz.x.length, 2);
+  } finally {
+    server.close();
+    try { fs.unlinkSync(SEED_FILE); } catch (_) { /* best effort */ }
+  }
+});

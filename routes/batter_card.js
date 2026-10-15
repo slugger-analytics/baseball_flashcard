@@ -55,6 +55,14 @@ router.get('/api/batter/card', async (req, res) => {
     }
     const { finalStartDate, finalEndDate } = range;
 
+    let parsedMaxVelocity = 999;
+    if (maxVelocity !== undefined) {
+      if (typeof maxVelocity !== 'string' || !/^\d+$/.test(maxVelocity) || Number(maxVelocity) > 105) {
+        return res.status(400).json({ error: 'invalid_velocity', message: 'Maximum velocity must be an integer from 0 to 105 mph.' });
+      }
+      parsedMaxVelocity = Number(maxVelocity) >= 105 ? 999 : Number(maxVelocity);
+    }
+
     console.log(`\nBatter card: ${ids.length} id(s), ${finalStartDate} → ${finalEndDate}`);
 
     // Scoped fetch — one query per id, merged. Never touches the full pitch space.
@@ -86,7 +94,6 @@ router.get('/api/batter/card', async (req, res) => {
 
     pitches = filterByPitchGroup(pitches, pitchGroup);
 
-    const parsedMaxVelocity = maxVelocity ? parseFloat(maxVelocity) : 999;
     // Attach the newest season-to-date league first-pitch average (memo/disk). If a
     // cold container has none yet, this is null → Neutral + "league avg pending".
     const leagueFirstPitchAvg = getLeagueFirstPitchAvg();
@@ -114,7 +121,7 @@ router.get('/api/batter/card', async (req, res) => {
     });
   } catch (error) {
     console.error('Error building batter card:', error.message);
-    res.status(500).json({ error: 'card_failed', message: error.message });
+    res.status(500).json({ error: 'card_failed', message: 'Unable to build this batter card.' });
   }
 });
 
