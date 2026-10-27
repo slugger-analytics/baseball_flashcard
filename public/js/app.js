@@ -43,6 +43,8 @@ class FlashcardApp {
     this.ensurePrintContainers();
     this.setupKeyboard();
     window.addEventListener('resize', () => this.syncToolbarHeight());
+    // Let the cached main-team rosters render before the full SLUGGER index loads.
+    this.loadCachedRosters();
     this.loadBattersIndex();
   }
 
