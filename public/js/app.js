@@ -275,6 +275,7 @@ class FlashcardApp {
    */
   async loadRosters() {
     this.rostersState = 'loading';
+    this.loadCachedRosters();
     this.renderToolbar();
     try {
       const response = await fetch('./api/rosters');
@@ -282,6 +283,7 @@ class FlashcardApp {
       if (response.ok && Array.isArray(data.teams) && data.teams.length > 0) {
         ROSTERS = data.teams;
         ROSTER_UNMATCHED = data.unmatched || [];
+        this.saveRosters(data);
         this.rostersState = 'ready';
       } else {
         this.rostersState = 'failed';
@@ -291,6 +293,29 @@ class FlashcardApp {
       this.rostersState = 'failed';
     }
     this.renderToolbar();
+  }
+
+  loadCachedRosters() {
+    try {
+      const cached = JSON.parse(localStorage.getItem('flashcard.rosters') || 'null');
+      if (!cached || !Array.isArray(cached.teams) || !cached.teams.length) return;
+      ROSTERS = cached.teams;
+      ROSTER_UNMATCHED = Array.isArray(cached.unmatched) ? cached.unmatched : [];
+      this.rostersState = 'ready';
+    } catch (_) {
+      // Browser storage is only an acceleration layer.
+    }
+  }
+
+  saveRosters(data) {
+    try {
+      localStorage.setItem('flashcard.rosters', JSON.stringify({
+        teams: data.teams,
+        unmatched: data.unmatched || [],
+      }));
+    } catch (_) {
+      // Browser storage is only an acceleration layer.
+    }
   }
 
   batterCacheKey(batter) {

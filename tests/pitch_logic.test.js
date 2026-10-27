@@ -106,6 +106,19 @@ test('computeBucketRatings marks under-sample buckets eliminated', () => {
   assert.strictEqual(buckets[bucketKey({ pitch: 'SL', zone: 'Low-In' })].eliminated, true);
 });
 
+test('outside-zone buckets never become attack recommendations', () => {
+  const pitches = [
+    ...Array.from({ length: 20 }, () => pz('FB', 'Chase Mid-Out', 'out')),
+    ...Array.from({ length: 20 }, () => pz('FB', 'Chase Mid-Out', 'ball')),
+  ];
+  const { buckets } = computeBucketRatings(pitches, { bucketMinPitches: 1 });
+  const chase = buckets[bucketKey({ pitch: 'FB', zone: 'Chase Mid-Out' })];
+  assert.notStrictEqual(chase.rating, 'green');
+
+  const visible = getVisiblePitches({ pitchZones: pitches }, { bucketMinPitches: 1 });
+  assert.ok(visible.pitches.every(pitch => pitch.rating !== 'green'));
+});
+
 test('getVisiblePitches drops eliminated buckets and hidden pitch types', () => {
   const batter = {
     pitchZones: [

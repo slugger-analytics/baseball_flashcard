@@ -19,6 +19,7 @@ let BATTERS_INDEX = [];
 // when iScore is unreachable, in which case the picker falls back to the flat
 // index and simply offers no team filter.
 let ROSTERS = [];
+let ROSTER_UNMATCHED = [];
 // Default settings
 const DEFAULT_SETTINGS = {
   // Zone analysis thresholds

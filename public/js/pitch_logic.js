@@ -610,8 +610,11 @@ function computeBucketRatings(pitches, settings) {
       b.shrunkRate = (b.win + k * expected) / (decisive + k);
       b.delta = b.shrunkRate - expected;
       const edge = REGIME_EDGE[b.regime] * sensitivityMultiplier(cfg);
-      // Higher pitcher-win rate than his norm = a good place to attack.
-      if (b.delta >= edge) b.rating = 'green';
+      // Outside pitches stay contextual: even a strong chase result is not an
+      // attack recommendation, because the default pitch plan should stay in
+      // the strike zone. Chase buckets may still be red when the batter handles
+      // them unusually well.
+      if (!isChaseZone(b.zone) && b.delta >= edge) b.rating = 'green';
       else if (b.delta <= -edge) b.rating = 'red';
       // Normalised by the regime's edge so in-zone and chase buckets are
       // ordered on one comparable scale.
