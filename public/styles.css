@@ -326,6 +326,17 @@ html, body {
   grid-template-columns: minmax(0, 1fr);
 }
 
+/* Expanded card: keep the graphic and scouting readout on one upper row, with
+   the pitch-handling table spanning the full width beneath them. */
+.widget:not(.widget--compact) {
+  grid-template-areas:
+    "header header"
+    "pitch info"
+    "arsenal info";
+  grid-template-columns: minmax(0, 1.55fr) minmax(280px, 0.75fr);
+  grid-template-rows: auto auto auto;
+}
+
 .flashcard-body {
   grid-area: pitch;
   display: grid;
@@ -368,14 +379,14 @@ html, body {
   align-items: center;
   justify-content: flex-start;
   background: #ffffff;
-  padding: 0 4px;
+  padding: 0 4px 8px;
   position: relative;
 }
 
 .pitch-zone-container {
   position: relative;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: flex-start;
   gap: 6px;
   width: 100%;
@@ -391,6 +402,7 @@ html, body {
   justify-content: center;
   position: relative;
   flex-shrink: 0;
+  margin-top: -8px;
 }
 
 .batter-graphic img {
@@ -418,6 +430,22 @@ html, body {
   margin: 0;
   box-shadow: var(--shadow-md);
   order: 1;
+}
+
+.card-arsenal {
+  grid-area: arsenal;
+  width: auto;
+}
+
+.card-info {
+  grid-area: info;
+  align-self: stretch;
+}
+
+@media (min-width: 769px) {
+  .card-info > .power-sequence {
+    flex: 1 1 0;
+  }
 }
 
 /* The strike zone proper, drawn inside the larger canvas so balls and chase
@@ -1956,6 +1984,12 @@ button:active {
     height: auto;
     border-radius: 12px;
     transform: none !important;
+  }
+
+  .widget:not(.widget--compact) {
+    grid-template-areas: "header" "pitch" "info" "arsenal";
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto auto auto;
   }
 
   /* Header */

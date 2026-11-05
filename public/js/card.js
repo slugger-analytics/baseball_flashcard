@@ -76,11 +76,6 @@ Object.assign(FlashcardApp.prototype, {
     const lineup = TEAMS_DATA[this.cardTeam];
     const data = lineup[this.cardIndex];
     const compactMode = !this.showExpandedCard;
-    const summaryItems = [
-      createElement('div', { className: 'quick-summary__item' }, `Hand: ${data.handedness || '—'}`),
-      createElement('div', { className: 'quick-summary__item' }, `Pitches: ${data.stats?.totalPitches || 0}`),
-      createElement('div', { className: 'quick-summary__item' }, `Steal: ${data.tendencies?.stealThreat || 'Low'}`),
-    ];
     return createElement('div', { className: `widget${compactMode ? ' widget--compact' : ''}` },
       createElement('div', { className: 'header' },
         createElement('div', { className: 'header__title' },
@@ -153,15 +148,18 @@ Object.assign(FlashcardApp.prototype, {
         const batterEl = createBatterGraphic(data.handedness, data.batter, renderedCount, availableCount);
 
         if (compactMode) {
-          const summary = createElement('div', { className: 'quick-summary' }, ...summaryItems);
-          return createElement('div', { className: 'flashcard-body' }, pitchZoneEl, batterEl, summary);
+          return pitchZoneEl;
         }
 
         const frag = document.createDocumentFragment();
         frag.appendChild(pitchZoneEl);
         frag.appendChild(batterEl);
         const arsenalEl = createArsenal(data);
-        if (arsenalEl) frag.appendChild(arsenalEl);
+        if (arsenalEl) {
+          arsenalEl.classList.add('card-arsenal');
+          frag.appendChild(arsenalEl);
+        }
+        this._tendenciesEl.classList.add('card-info');
         frag.appendChild(this._tendenciesEl);
         return frag;
       })()

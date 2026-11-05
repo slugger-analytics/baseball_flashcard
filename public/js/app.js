@@ -34,7 +34,7 @@ class FlashcardApp {
     this.showInfoPanel = false;
     this.infoSectionId = null;
     this.showSettingsPanel = false;
-    this.showExpandedCard = true;
+    this.showExpandedCard = false;
     this.prefetchCache = new Map();
     // Settings stay hidden until opened from the card header. Users can then
     // dock the panel from the settings modal if they prefer it beside the card.
