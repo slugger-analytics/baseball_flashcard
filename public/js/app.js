@@ -32,14 +32,13 @@ class FlashcardApp {
     this.rangePreset = savedRange.preset;
     this.customRange = savedRange.custom;
     this.showInfoPanel = false;
+    this.infoSectionId = null;
     this.showSettingsPanel = false;
-    this.showExpandedCard = false;
+    this.showExpandedCard = true;
     this.prefetchCache = new Map();
-    // Settings live in an always-visible docked sidebar by default (never printed).
-    // On mobile the docked sidebar stacks BELOW the card (see styles.css
-    // @media max-width:768px), so it can start docked everywhere without covering
-    // the flashcard. Users hide it on demand via the "⚙ Hide Settings" button.
-    this.isSettingsDocked = true;
+    // Settings stay hidden until opened from the card header. Users can then
+    // dock the panel from the settings modal if they prefer it beside the card.
+    this.isSettingsDocked = false;
     this.ensurePrintContainers();
     this.setupKeyboard();
     window.addEventListener('resize', () => this.syncToolbarHeight());
@@ -50,6 +49,7 @@ class FlashcardApp {
 
   toggleInfo() {
     this.showInfoPanel = !this.showInfoPanel;
+    if (!this.showInfoPanel) this.infoSectionId = null;
     this.render();
   }
 
@@ -57,8 +57,7 @@ class FlashcardApp {
     if (this.isSettingsDocked) {
       this.isSettingsDocked = false;
     } else {
-      this.isSettingsDocked = true;
-      this.showSettingsPanel = false;
+      this.showSettingsPanel = !this.showSettingsPanel;
     }
     this.render();
   }

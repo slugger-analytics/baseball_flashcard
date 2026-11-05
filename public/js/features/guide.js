@@ -8,14 +8,27 @@
  * @param {Function} onClose - Called by the backdrop and the "Got it!" button.
  * @returns {HTMLElement}
  */
-function renderInfoGuide(onClose) {
-  return createElement('div', { className: 'info-overlay', onclick: () => onClose() },
+function renderInfoGuide(onClose, sectionId = null) {
+  const sectionTitles = {
+    'first-pitch': 'First-Pitch Approach',
+    vulnerable: 'Vulnerable Zones',
+    hot: 'Hot Zones (Avoid)',
+    'out-pitch': 'Out Pitch / Sequence',
+    threats: 'Threats & Tendencies'
+  };
+  const title = sectionId && sectionTitles[sectionId]
+    ? `${sectionTitles[sectionId]} Explained`
+    : 'Understanding the Widget';
+  const subtitle = sectionId
+    ? 'What this section means and how to use it'
+    : 'A guide to reading your batter flashcards';
+  const modal = createElement('div', { className: 'info-overlay', onclick: () => onClose() },
     createElement('div', { className: 'info-modal', onclick: (e) => e.stopPropagation() },
 
       // Header
       createElement('div', { className: 'info-modal__header' },
-        createElement('h3', { className: 'info-modal__title' }, 'Understanding the Widget',), 
-        createElement('p', { className: 'info-modal__subtitle' }, 'A guide to reading your batter flashcards')
+        createElement('h3', { className: 'info-modal__title' }, title),
+        createElement('p', { className: 'info-modal__subtitle' }, subtitle)
       ),
 
       // Body
@@ -161,4 +174,10 @@ function renderInfoGuide(onClose) {
       )
     )
   );
+  if (sectionId) {
+    modal.querySelectorAll('.info-modal .info-entry').forEach((entry) => {
+      entry.hidden = entry.id !== `info-entry-${sectionId}`;
+    });
+  }
+  return modal;
 }

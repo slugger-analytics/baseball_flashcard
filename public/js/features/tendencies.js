@@ -8,9 +8,14 @@
 function openInfoModal(sectionId) {
   if (!app) return;
   app.showInfoPanel = true;
+  app.infoSectionId = sectionId;
   app.render();
+  const targetId = 'info-entry-' + sectionId;
+  document.querySelectorAll('.info-modal .info-entry').forEach((entry) => {
+    entry.style.display = entry.id === targetId ? '' : 'none';
+  });
   requestAnimationFrame(() => {
-    const el = document.getElementById('info-entry-' + sectionId);
+    const el = document.getElementById(targetId);
     if (!el) return;
     el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     el.classList.add('info-entry--highlight');

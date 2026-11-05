@@ -128,7 +128,7 @@ Object.assign(FlashcardApp.prototype, {
           }, `as ${profile.handedness}`))
         ) : null
       ),
-      this.showInfoPanel ? renderInfoGuide(() => this.toggleInfo()) : null,
+      this.showInfoPanel ? renderInfoGuide(() => this.toggleInfo(), this.infoSectionId) : null,
       (() => {
         const tendenciesEl = createTendencies(data.tendencies, data.stats, data.zoneAnalysis, data.powerSequence, data.powerSequenceBreakdown);
 

@@ -520,14 +520,12 @@ html, body {
 .info-section {
   grid-area: info;
   background: var(--bg);
-  padding: clamp(12px, 2vw, 16px);
-  overflow-y: auto;
-  overflow-x: hidden;
+  padding: 10px;
+  overflow: visible;
   border-left: 1px solid var(--border);
   display: flex;
   flex-direction: column;
-  gap: clamp(12px, 2vw, 16px);
-  max-height: calc(100vh - 80px);
+  gap: 8px;
 }
 
 .info-btn, .settings-btn {
@@ -582,15 +580,15 @@ html, body {
 .tendencies, .power-sequence {
   background: #ffffff;
   border: 1px solid var(--border);
-  border-radius: 16px;
-  padding: 20px;
+  border-radius: 12px;
+  padding: 12px;
   box-shadow: var(--shadow-sm);
-  margin-bottom: 8px;
+  margin-bottom: 0;
 }
 
 .tendencies h3, .power-sequence h4 {
-  margin: 0 0 16px 0;
-  font-size: 20px;
+  margin: 0 0 8px 0;
+  font-size: 15px;
   font-weight: 700;
   text-align: center;
 }
@@ -650,7 +648,7 @@ html, body {
 .power-sequence.out-sequence h4 { color: #10b981; }
 
 .power-sequence-text {
-  font-size: 18px;
+  font-size: 14px;
   color: var(--text);
   line-height: 1.4;
   font-weight: 700;
@@ -746,13 +744,13 @@ html, body {
   background: #fff;
   border: 1px solid #e2e8f0;
   border-radius: 10px;
-  padding: 12px 14px;
+  padding: 8px 10px;
   box-shadow: var(--shadow-md);
-  margin: 12px 0;
+  margin: 6px 0;
 }
 
 .arsenal__title {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -767,8 +765,8 @@ html, body {
 }
 
 .arsenal__table td {
-  padding: 3px 4px;
-  font-size: 13px;
+  padding: 2px 3px;
+  font-size: 12px;
 }
 
 .arsenal__family-row .arsenal__family {
@@ -786,7 +784,7 @@ html, body {
 }
 
 .arsenal__type-row td {
-  font-size: 12px;
+  font-size: 11px;
   color: #64748b;
 }
 
@@ -807,8 +805,8 @@ html, body {
 }
 
 .arsenal__foot {
-  margin-top: 8px;
-  font-size: 10px;
+  margin-top: 5px;
+  font-size: 9px;
   color: #94a3b8;
 }
 
